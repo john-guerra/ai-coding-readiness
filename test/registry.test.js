@@ -52,7 +52,7 @@ describe("runChecks", () => {
     await runChecks(
       [check("slow", "L"), check("fast", "S"), check("mid", "M")],
       repo,
-      spy
+      spy,
     );
     expect(order).toEqual(["fast", "mid", "slow"]);
   });
@@ -61,7 +61,11 @@ describe("runChecks", () => {
     const repo = createFakeRepo();
     /** @type {(f: Finding) => void} */
     const onFinding = vi.fn();
-    const all = await runChecks([check("a", "S"), check("b", "S")], repo, onFinding);
+    const all = await runChecks(
+      [check("a", "S"), check("b", "S")],
+      repo,
+      onFinding,
+    );
     expect(onFinding).toHaveBeenCalledTimes(2);
     expect(all).toHaveLength(2);
   });
@@ -80,7 +84,7 @@ describe("runChecks", () => {
     await runChecks(
       [check("odd", /** @type {any} */ ("XL")), check("fast", "S")],
       repo,
-      spy
+      spy,
     );
     expect(order).toEqual(["fast", "odd"]);
   });

@@ -7,7 +7,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
-const BIN = join(dirname(fileURLToPath(import.meta.url)), "..", "bin", "audit.mjs");
+const BIN = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "bin",
+  "audit.mjs",
+);
 
 /**
  * The CLI reports failures through its exit code, so a non-zero exit is a
@@ -20,8 +25,14 @@ async function audit(args) {
     const { stdout, stderr } = await run(process.execPath, [BIN, ...args]);
     return { code: 0, stdout, stderr };
   } catch (err) {
-    const e = /** @type {{code?: number, stdout?: string, stderr?: string}} */ (err);
-    return { code: e.code ?? 1, stdout: e.stdout ?? "", stderr: e.stderr ?? "" };
+    const e = /** @type {{code?: number, stdout?: string, stderr?: string}} */ (
+      err
+    );
+    return {
+      code: e.code ?? 1,
+      stdout: e.stdout ?? "",
+      stderr: e.stderr ?? "",
+    };
   }
 }
 

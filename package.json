@@ -4,9 +4,16 @@
   "description": "Diagnose and adapt a GitHub repo for AI-assisted collaboration under concurrent contributors",
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=20" },
-  "bin": { "ai-coding-readiness": "./bin/audit.mjs" },
-  "files": ["bin", "lib"],
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "ai-coding-readiness": "./bin/audit.mjs"
+  },
+  "files": [
+    "bin",
+    "lib"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
@@ -14,7 +21,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
-  "dependencies": { "yaml": "2.9.0" },
+  "dependencies": {
+    "yaml": "2.9.0"
+  },
   "devDependencies": {
     "@types/node": "20.19.43",
     "prettier": "3.6.2",

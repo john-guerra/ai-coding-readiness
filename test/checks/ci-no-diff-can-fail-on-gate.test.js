@@ -260,7 +260,9 @@ jobs:
   });
 
   it("is unknown when a workflow cannot be parsed", async () => {
-    const repo = createFakeRepo({ files: wf("this: is: not: valid: yaml:\n  - [") });
+    const repo = createFakeRepo({
+      files: wf("this: is: not: valid: yaml:\n  - ["),
+    });
     const f = await check.run(repo);
     expect(f.status).toBe("unknown");
   });

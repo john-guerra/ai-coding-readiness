@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
-import check, { profile } from "../../lib/checks/concurrency-pr-path-contention.js";
+import check, {
+  profile,
+} from "../../lib/checks/concurrency-pr-path-contention.js";
 import { createFakeRepo } from "../../lib/repo.js";
 
 describe("profile", () => {
   it("ranks by share of PRs touched, descending", () => {
     const rows = profile(
       [["a.js", "CHANGELOG.md"], ["b.js", "CHANGELOG.md"], ["CHANGELOG.md"]],
-      {}
+      {},
     );
     expect(rows[0].path).toBe("CHANGELOG.md");
     expect(rows[0].count).toBe(3);
@@ -32,7 +34,10 @@ describe("profile", () => {
   });
 
   it("classifies lockfiles as generated, not source", () => {
-    const rows = profile([["package-lock.json", "yarn.lock", "src/app.js"]], {});
+    const rows = profile(
+      [["package-lock.json", "yarn.lock", "src/app.js"]],
+      {},
+    );
     const kinds = Object.fromEntries(rows.map((r) => [r.path, r.kind]));
     expect(kinds["package-lock.json"]).toBe("generated");
     expect(kinds["yarn.lock"]).toBe("generated");
@@ -52,7 +57,7 @@ describe("concurrency.pr-path-contention", () => {
   // measures the sample size and nothing else.
   it("is unknown, not fail, when one merge commit would put every file it touched at 100%", async () => {
     const f = await check.run(
-      createFakeRepo({ mergedPrFileLists: [["a.js", "b.js", "c.js"]] })
+      createFakeRepo({ mergedPrFileLists: [["a.js", "b.js", "c.js"]] }),
     );
     expect(f.status).toBe("unknown");
     expect(f.evidence).toMatch(/\b1\b/);
@@ -64,11 +69,15 @@ describe("concurrency.pr-path-contention", () => {
     const lists = (n) =>
       Array.from({ length: n }, (_, i) => [`src/f${i}.js`, "CHANGELOG.md"]);
 
-    const nine = await check.run(createFakeRepo({ mergedPrFileLists: lists(9) }));
+    const nine = await check.run(
+      createFakeRepo({ mergedPrFileLists: lists(9) }),
+    );
     expect(nine.status).toBe("unknown");
     expect(nine.evidence).toMatch(/\b9\b/);
 
-    const ten = await check.run(createFakeRepo({ mergedPrFileLists: lists(10) }));
+    const ten = await check.run(
+      createFakeRepo({ mergedPrFileLists: lists(10) }),
+    );
     expect(ten.status).toBe("fail");
   });
 
@@ -92,7 +101,10 @@ describe("concurrency.pr-path-contention", () => {
       "src/App.svelte",
     ]);
     const f = await check.run(
-      createFakeRepo({ files: { "src/App.svelte": big }, mergedPrFileLists: lists })
+      createFakeRepo({
+        files: { "src/App.svelte": big },
+        mergedPrFileLists: lists,
+      }),
     );
     expect(f.status).toBe("fail");
     expect(f.evidence).toMatch(/App\.svelte/);
@@ -102,9 +114,9 @@ describe("concurrency.pr-path-contention", () => {
 
   it("passes when no file is contended", async () => {
     const lists = Array.from({ length: 10 }, (_, i) => [`src/f${i}.js`]);
-    expect((await check.run(createFakeRepo({ mergedPrFileLists: lists }))).status).toBe(
-      "pass"
-    );
+    expect(
+      (await check.run(createFakeRepo({ mergedPrFileLists: lists }))).status,
+    ).toBe("pass");
   });
 
   it("is not auto-fixable when a contended god-file sits alongside a metadata file", async () => {
@@ -115,7 +127,10 @@ describe("concurrency.pr-path-contention", () => {
       "src/App.svelte",
     ]);
     const f = await check.run(
-      createFakeRepo({ files: { "src/App.svelte": big }, mergedPrFileLists: lists })
+      createFakeRepo({
+        files: { "src/App.svelte": big },
+        mergedPrFileLists: lists,
+      }),
     );
     expect(f.status).toBe("fail");
     expect(f.evidence).toMatch(/CHANGELOG\.md/);
@@ -135,7 +150,7 @@ describe("concurrency.pr-path-contention", () => {
       createFakeRepo({
         files: { "src/small.js": "a\n".repeat(10) },
         mergedPrFileLists: lists,
-      })
+      }),
     );
     expect(f.status).toBe("fail");
     expect(f.evidence).toMatch(/src\/small\.js/);
@@ -153,7 +168,7 @@ describe("concurrency.pr-path-contention", () => {
       createFakeRepo({
         files: { "package-lock.json": bigLock },
         mergedPrFileLists: lists,
-      })
+      }),
     );
     expect(f.status).toBe("fail");
     expect(f.evidence).toMatch(/package-lock\.json/);
@@ -206,7 +221,7 @@ describe("concurrency.pr-path-contention", () => {
       createFakeRepo({
         files: { "CHANGELOG.md": "one\ntwo\nthree\n" },
         mergedPrFileLists: lists,
-      })
+      }),
     );
     expect(f.evidence).toMatch(/3 lines/);
     expect(f.evidence).not.toMatch(/4 lines/);
@@ -223,7 +238,7 @@ describe("concurrency.pr-path-contention", () => {
       createFakeRepo({
         files: { "ui/src/App.svelte": "x\n".repeat(7409) },
         mergedPrFileLists: lists,
-      })
+      }),
     );
     expect(f.status).toBe("fail");
     expect(f.fix).toMatch(/7,409 lines/);
@@ -234,10 +249,13 @@ describe("concurrency.pr-path-contention", () => {
   it("surfaces a large sub-threshold file as 'also worth attention' without failing the status", async () => {
     const big = "a\n".repeat(2000);
     const lists = Array.from({ length: 20 }, (_, i) =>
-      i < 3 ? ["src/big.js"] : [`src/f${i}.js`]
+      i < 3 ? ["src/big.js"] : [`src/f${i}.js`],
     );
     const f = await check.run(
-      createFakeRepo({ files: { "src/big.js": big }, mergedPrFileLists: lists })
+      createFakeRepo({
+        files: { "src/big.js": big },
+        mergedPrFileLists: lists,
+      }),
     );
     expect(f.status).toBe("pass");
     expect(f.evidence).toMatch(/also worth attention/i);

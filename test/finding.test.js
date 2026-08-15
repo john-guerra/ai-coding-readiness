@@ -24,7 +24,7 @@ describe("makeFinding", () => {
   // The spec's binding rule, enforced at runtime rather than by review.
   it("rejects a failing finding that carries no fix", () => {
     expect(() => makeFinding({ ...base, status: "fail", fix: null })).toThrow(
-      /every check ships with its remediation/i
+      /every check ships with its remediation/i,
     );
   });
 
@@ -46,7 +46,7 @@ describe("makeFinding", () => {
 
   it("rejects a judgment-layer finding, which the binary must never emit", () => {
     expect(() => makeFinding({ ...base, layer: "judgment" })).toThrow(
-      /judgment/i
+      /judgment/i,
     );
   });
 });

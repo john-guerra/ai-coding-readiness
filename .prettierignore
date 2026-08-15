@@ -1,0 +1,10 @@
+# Prose documents are not Prettier's to reflow.
+#
+# Prettier pads markdown table columns to align them, which turned a one-line
+# edit to the design spec into 281 lines of whitespace churn and makes every
+# future diff on these documents harder to read than it needs to be. Code and
+# config are formatted; specs and plans are written.
+docs/
+
+# Generated, never hand-edited.
+package-lock.json

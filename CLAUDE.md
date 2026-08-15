@@ -9,7 +9,7 @@ first. What follows is Claude-specific only.
 ## Claude Code specifics
 
 - **This repository is the tool's own first adopter.** `node bin/audit.mjs
-  --path .` must not report a `fail`. Several checks will report `unknown` here
+--path .` must not report a `fail`. Several checks will report `unknown` here
   (no browser tier, few merge commits) and that is the correct answer — see rule
   2 in the imported guide.
 - **Keep this file and `AGENTS.md` small.** Together they are the always-loaded

@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "yaml";
-import { readTriggers, gatesMerge, gateJobs, IF_NOTE } from "../lib/workflow.js";
+import {
+  readTriggers,
+  gatesMerge,
+  gateJobs,
+  IF_NOTE,
+} from "../lib/workflow.js";
 
 /** @param {string} yaml */
 const on = (yaml) => readTriggers(parse(yaml));
@@ -41,10 +46,12 @@ describe("gatesMerge", () => {
   });
 
   it("counts a types list that includes a type firing while the PR is open", () => {
-    expect(gates("on:\n  pull_request:\n    types: [opened, synchronize, closed]")).toBe(
-      true
+    expect(
+      gates("on:\n  pull_request:\n    types: [opened, synchronize, closed]"),
+    ).toBe(true);
+    expect(gates("on:\n  pull_request:\n    types: [ready_for_review]")).toBe(
+      true,
     );
-    expect(gates("on:\n  pull_request:\n    types: [ready_for_review]")).toBe(true);
   });
 
   // A merge queue IS the merge gate on repos that use one. Treating only

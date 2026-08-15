@@ -293,7 +293,9 @@ jobs:
 describe("ci.flake-observability", () => {
   it("fails when the browser config declares no retries", async () => {
     const repo = createFakeRepo({
-      files: { [PW_CONFIG]: "export default { workers: 1, testDir: './e2e' };" },
+      files: {
+        [PW_CONFIG]: "export default { workers: 1, testDir: './e2e' };",
+      },
     });
     const f = await flake.run(repo);
     expect(f.status).toBe("fail");
@@ -303,7 +305,9 @@ describe("ci.flake-observability", () => {
 
   it("passes when retries are configured", async () => {
     const repo = createFakeRepo({
-      files: { [PW_CONFIG]: "export default { retries: process.env.CI ? 1 : 0 };" },
+      files: {
+        [PW_CONFIG]: "export default { retries: process.env.CI ? 1 : 0 };",
+      },
     });
     expect((await flake.run(repo)).status).toBe("pass");
   });
@@ -341,7 +345,8 @@ describe("ci.flake-observability", () => {
   it("passes when a 0 appears only inside an expression that was not evaluated", async () => {
     const repo = createFakeRepo({
       files: {
-        [PW_CONFIG]: "export default { retries: process.env.CI ? 2 : 0, workers: 1 };",
+        [PW_CONFIG]:
+          "export default { retries: process.env.CI ? 2 : 0, workers: 1 };",
       },
     });
     expect((await flake.run(repo)).status).toBe("pass");
@@ -349,7 +354,9 @@ describe("ci.flake-observability", () => {
 
   it("passes when retries is read off a variable rather than written literally", async () => {
     const repo = createFakeRepo({
-      files: { [PW_CONFIG]: "export default { retries: RETRY_COUNT, workers: 1 };" },
+      files: {
+        [PW_CONFIG]: "export default { retries: RETRY_COUNT, workers: 1 };",
+      },
     });
     expect((await flake.run(repo)).status).toBe("pass");
   });
@@ -409,6 +416,8 @@ describe("ci.flake-observability", () => {
   });
 
   it("is unknown when there is no browser config to read", async () => {
-    expect((await flake.run(createFakeRepo({ files: {} }))).status).toBe("unknown");
+    expect((await flake.run(createFakeRepo({ files: {} }))).status).toBe(
+      "unknown",
+    );
   });
 });
