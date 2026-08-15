@@ -10,14 +10,15 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --checkJs --noEmit --allowJs --target es2022 --module nodenext --moduleResolution nodenext lib/*.js lib/checks/*.js bin/*.mjs",
+    "typecheck": "tsc -p tsconfig.json",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
-  "dependencies": { "yaml": "2.8.1" },
+  "dependencies": { "yaml": "2.9.0" },
   "devDependencies": {
+    "@types/node": "20.19.43",
     "prettier": "3.6.2",
     "typescript": "5.9.3",
-    "vitest": "3.2.4"
+    "vitest": "3.2.7"
   }
 }
