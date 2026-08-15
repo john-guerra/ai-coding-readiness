@@ -74,6 +74,127 @@ jobs:
     expect((await sharded.run(repo)).status).toBe("pass");
   });
 
+  // `npx playwright install` downloads a browser binary. A unit job that does
+  // it is not running browser tests, and telling its maintainer to shard a
+  // job with no browser tests in it is advice that cannot be followed.
+  it("does not treat `playwright install` in a unit job as running the browser tier", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  unit:
+    steps:
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+`,
+      },
+    });
+    const f = await sharded.run(repo);
+    expect(f.status).not.toBe("fail");
+    expect(f.status).toBe("unknown");
+  });
+
+  // A shard matrix that no command consumes runs the WHOLE suite once per
+  // matrix leg — strictly worse than not sharding at all, and it was
+  // reported green.
+  it("fails when a shard matrix exists but no command ever consumes it", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    strategy:
+      matrix:
+        shard: [1, 2]
+    steps:
+      - run: npm run test:e2e
+`,
+      },
+    });
+    expect((await sharded.run(repo)).status).toBe("fail");
+  });
+
+  it("agrees with the gate predicate: a merge_group gate is examined too", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on:
+  merge_group:
+jobs:
+  e2e:
+    steps:
+      - run: npm run test:e2e
+`,
+      },
+    });
+    expect((await sharded.run(repo)).status).toBe("fail");
+  });
+
+  it("does not treat a pull_request trigger keyed to closed as a gate", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/pr-closeout.yml": `
+on:
+  pull_request:
+    types: [closed]
+jobs:
+  closeout:
+    steps:
+      - run: npm run test:e2e
+`,
+      },
+    });
+    expect((await sharded.run(repo)).status).toBe("unknown");
+  });
+
+  it("reports a conditional job and says the condition was not evaluated", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    if: github.event.pull_request.draft == false
+    steps:
+      - run: npm run test:e2e
+`,
+      },
+    });
+    const f = await sharded.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/not evaluated/);
+  });
+
+  it("is unknown when a workflow parses as YAML but is not a mapping", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    strategy:
+      matrix:
+        shard: [1, 2]
+    steps:
+      - run: npx playwright test --shard=\${{ matrix.shard }}/2
+`,
+        ".github/workflows/notes.yml": "- just\n- a\n- list\n",
+      },
+    });
+    const f = await sharded.run(repo);
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/notes\.yml/);
+  });
+
   it("is unknown, not pass, when a genuinely unsharded PR-gate job could be hiding in a file that failed to parse", async () => {
     const repo = createFakeRepo({
       files: {

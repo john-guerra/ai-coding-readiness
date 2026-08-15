@@ -40,7 +40,10 @@ jobs:
     expect(f.fix).toMatch(/search by title|update one issue/i);
   });
 
-  it("passes when the same step runs only on a schedule", async () => {
+  // The step is where it belongs, so it is not a hit. The verdict is
+  // `unknown` rather than `pass` because this repository has no merge gate
+  // among its workflows at all — see the merge-queue tests below.
+  it("does not flag the same step when it runs only on a schedule", async () => {
     const repo = createFakeRepo({
       files: wf(`
 on:
@@ -54,7 +57,163 @@ jobs:
 `),
     });
     const f = await check.run(repo);
-    expect(f.status).toBe("pass");
+    expect(f.status).not.toBe("fail");
+    expect(f.status).toBe("unknown");
+  });
+
+  // A merge queue IS the merge gate on repos that use one. Reporting `pass`
+  // here means reporting green without ever having examined the gate.
+  it("is unknown, not pass, when no workflow gates a merge at all", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on:
+  push:
+    branches: [main]
+jobs:
+  check:
+    steps:
+      - run: npm ci
+      - run: npm test
+`),
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/no pull[- ]request/i);
+    expect(f.evidence).toMatch(/merge[- _]queue|merge_group/i);
+  });
+
+  it("examines a merge_group gate, which a pull_request-only predicate missed", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on:
+  merge_group:
+  push:
+    branches: [main]
+jobs:
+  check:
+    steps:
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm run test:e2e
+`),
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/npm audit/);
+  });
+
+  it("passes a merge_group gate whose steps can only fail because of the diff", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on:
+  merge_group:
+jobs:
+  check:
+    steps:
+      - run: npm test
+`),
+    });
+    expect((await check.run(repo)).status).toBe("pass");
+  });
+
+  // The canonical way a maintainer de-fangs an advisory scan they want to see
+  // but not be blocked by. A step that cannot turn the run red cannot block a
+  // merge, so telling them to move it is crying wolf.
+  it("does not flag a volatile step marked continue-on-error", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: npm audit --audit-level=high
+        continue-on-error: true
+      - run: npm test
+`),
+    });
+    expect((await check.run(repo)).status).toBe("pass");
+  });
+
+  it("does not flag a volatile step inside a job marked continue-on-error", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on: pull_request
+jobs:
+  advisory:
+    continue-on-error: true
+    steps:
+      - run: npm audit --audit-level=high
+  check:
+    steps:
+      - run: npm test
+`),
+    });
+    expect((await check.run(repo)).status).toBe("pass");
+  });
+
+  // A close-out workflow runs after the merge landed. It gates nothing.
+  it("does not treat a pull_request trigger keyed to closed as a gate", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".github/workflows/ci.yml": `
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: npm test
+`,
+        ".github/workflows/pr-closeout.yml": `
+on:
+  pull_request:
+    types: [closed]
+jobs:
+  closeout:
+    steps:
+      - run: npm audit --audit-level=high
+`,
+      },
+    });
+    expect((await check.run(repo)).status).toBe("pass");
+  });
+
+  // Still reported — evaluating a GitHub expression is out of scope, and
+  // dropping the step would hide a real finding behind a condition nobody
+  // read — but the evidence must not imply the condition was checked.
+  it("reports a conditional step and says the condition was not evaluated", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: npm audit --audit-level=high
+        if: github.event_name == 'schedule'
+`),
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/not evaluated/);
+    expect(f.evidence).toMatch(/if:/);
+  });
+
+  // Parsing as YAML is not the same as being a workflow. A document that is a
+  // string or a list was previously skipped without joining the unexamined
+  // list, so it counted as examined without having been checked.
+  it("is unknown when a workflow parses as YAML but is not a mapping", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".github/workflows/ci.yml": `
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: npm test
+`,
+        ".github/workflows/notes.yml": "- just\n- a\n- list\n",
+      },
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/notes\.yml/);
   });
 
   it("detects the shorthand `on: pull_request` form", async () => {
