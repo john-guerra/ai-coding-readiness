@@ -262,3 +262,59 @@ describe("concurrency.pr-path-contention", () => {
     expect(f.evidence).toMatch(/src\/big\.js/);
   });
 });
+
+describe("concurrency.pr-path-contention with a capped API sample", () => {
+  /** @param {number} n */
+  const lists = (n) =>
+    Array.from({ length: n }, (_, i) => [`src/f${i}.js`, "CHANGELOG.md"]);
+
+  it("names the GitHub API in its evidence when the sample came from there", async () => {
+    const f = await check.run(
+      createFakeRepo({
+        mergedPrFileLists: lists(20),
+        prListSource: "github-api",
+      }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/GitHub API/);
+  });
+
+  // The cap deflates every share computed from a truncated list, so "nothing
+  // is contended" becomes a claim the sample cannot support. A real hit still
+  // outranks incomplete coverage — the same precedence the workflow checks use.
+  it("is unknown, not pass, when nothing looks contended but the sample was capped", async () => {
+    const uncontended = Array.from({ length: 20 }, (_, i) => [`src/f${i}.js`]);
+    const f = await check.run(
+      createFakeRepo({
+        mergedPrFileLists: uncontended,
+        prListSource: "github-api",
+        prListTruncated: 3,
+      }),
+    );
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/100 files|capped|truncat/i);
+  });
+
+  it("still fails on a real hit even when the sample was capped", async () => {
+    const f = await check.run(
+      createFakeRepo({
+        mergedPrFileLists: lists(20),
+        prListSource: "github-api",
+        prListTruncated: 3,
+      }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/lower bound|at least/i);
+  });
+
+  it("passes cleanly when nothing is contended and nothing was capped", async () => {
+    const uncontended = Array.from({ length: 20 }, (_, i) => [`src/f${i}.js`]);
+    const f = await check.run(
+      createFakeRepo({
+        mergedPrFileLists: uncontended,
+        prListSource: "github-api",
+      }),
+    );
+    expect(f.status).toBe("pass");
+  });
+});

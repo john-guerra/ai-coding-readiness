@@ -48,7 +48,16 @@ is load-bearing. Breaking one is an incomplete change, not a nitpick.
 
 - **The audit never writes to the repository it audits.** No exceptions in this
   layer.
-- **No network calls, no telemetry.** Nothing leaves the machine.
+- **No telemetry.** Nothing about you or your code is reported anywhere.
+- **One network path, and only one:** `mergedPrFileLists` shells out to `gh` to
+  list a repository's own merged pull requests, because a squash-merge repo
+  leaves no merge commits to read locally and that is most of GitHub. Local git
+  is always tried first; the API is the fallback. Nothing else in the audit
+  touches the network, and no new one should be added without a decision
+  recorded in the spec.
+- **Subprocesses are invoked with an argument array, never a shell string.**
+  `promisify(execFile)`, not `exec`. Nothing here can be shell-injected, and it
+  should stay that way.
 - **Never `npm audit fix --force`.** It resolves semver-major bumps silently.
 - **Do not add runtime dependencies** without a decision recorded in the spec.
   The production tree is `yaml` and nothing else, deliberately.
