@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { createFsRepo } from "../lib/repo.js";
 import { runChecks } from "../lib/registry.js";
@@ -44,6 +45,24 @@ function parseArgs(argv) {
     } else if (argv[i] === "--help" || argv[i] === "-h") opts.help = true;
     else throw new Error(`unknown argument: ${argv[i]}`);
   }
+
+  // A path that is not there is a usage error, not an audit. Without this a
+  // typo audited nothing and printed "0 fail · 4 unknown · 0 pass" with exit
+  // 0 — which in CI reads as a clean audit of a repository nobody opened.
+  // Every check answers `unknown` for its own honest reason, and the run as
+  // a whole is silently meaningless.
+  if (!opts.help) {
+    let stats;
+    try {
+      stats = statSync(opts.path);
+    } catch {
+      throw new Error(`--path does not exist: ${opts.path}`);
+    }
+    if (!stats.isDirectory()) {
+      throw new Error(`--path is not a directory: ${opts.path}`);
+    }
+  }
+
   return opts;
 }
 
