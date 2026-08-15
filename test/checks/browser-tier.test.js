@@ -51,6 +51,54 @@ jobs:
     });
     expect((await sharded.run(repo)).status).toBe("pass");
   });
+
+  it("passes when sharding is detected only via a matrix key, with no literal --shard in the command", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - run: SHARD=\${{ matrix.shard }} npm run test:e2e
+`,
+      },
+    });
+    // Deleting the matrixKeys.some(...) branch and keeping only the
+    // /--shard/ literal check would fail this test, since the command text
+    // above never contains the substring "--shard".
+    expect((await sharded.run(repo)).status).toBe("pass");
+  });
+
+  it("is unknown, not pass, when a genuinely unsharded PR-gate job could be hiding in a file that failed to parse", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        // Sharded and fine on its own.
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    strategy:
+      matrix:
+        shard: [1, 2]
+    steps:
+      - run: npx playwright test --shard=\${{ matrix.shard }}/2
+`,
+        // Malformed YAML (unbalanced flow map) — this file could genuinely
+        // contain an unsharded PR-gate e2e job, and the check must not
+        // silently drop it out of the count that decides `pass`.
+        ".github/workflows/nightly-e2e.yml": "on: [pull_request]\njobs: {\n",
+      },
+    });
+    const f = await sharded.run(repo);
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/nightly-e2e\.yml/);
+  });
 });
 
 describe("ci.flake-observability", () => {
@@ -69,6 +117,20 @@ describe("ci.flake-observability", () => {
       files: { [PW_CONFIG]: "export default { retries: process.env.CI ? 1 : 0 };" },
     });
     expect((await flake.run(repo)).status).toBe("pass");
+  });
+
+  it("fails, not passes, when retries is only mentioned in a comment", async () => {
+    const repo = createFakeRepo({
+      files: { [PW_CONFIG]: "// retries: not set on purpose" },
+    });
+    expect((await flake.run(repo)).status).toBe("fail");
+  });
+
+  it("fails, not passes, when retries is only mentioned inside a quoted string", async () => {
+    const repo = createFakeRepo({
+      files: { [PW_CONFIG]: 'export default { reporter: "retries: none" };' },
+    });
+    expect((await flake.run(repo)).status).toBe("fail");
   });
 
   it("is unknown when there is no browser config to read", async () => {
