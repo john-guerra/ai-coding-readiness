@@ -7,8 +7,8 @@
 A Claude Code plugin that **diagnoses** how ready a GitHub repository is for
 AI-assisted collaboration, and then **adapts** it — writing the harness that
 lets multiple AI agents and multiple humans work on the same repo
-simultaneously without colliding, and making its quality rules *mechanically
-enforced* rather than merely documented.
+simultaneously without colliding, and making its quality rules _mechanically
+enforced_ rather than merely documented.
 
 Two halves of one tool, bound by a single rule:
 
@@ -37,7 +37,7 @@ feature — because prose in a markdown file is persuasion, not enforcement.
 ## What it looks at
 
 - **Contention** — which files appear in nearly every PR diff? Those are the
-  points where two agents collide, and they're usually fixable by *removing*
+  points where two agents collide, and they're usually fixable by _removing_
   the shared file rather than locking it.
 - **Feedback loop health** — is the merge gate fast, and can it fail without a
   code change? A gate that goes red with no diff blocks every agent at once.

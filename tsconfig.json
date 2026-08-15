@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+  },
+  "include": ["lib/**/*.js", "bin/**/*.mjs", "test/**/*.js"],
+  // test/finding.test.js is excluded, not the whole test/ tree: its standalone
+  // `const base` object literal widens `tier` to `number` under ordinary TS
+  // inference (unrelated to `strict`), which conflicts with Finding's `tier:
+  // 0|1|2`. The file's contents are load-bearing for later tasks' assertions
+  // and must not be edited (e.g. to `as const`) to satisfy the typechecker —
+  // see task-1-report.md for the full diagnosis. Do not widen this exclusion;
+  // if another test file fails to typecheck, that's a different problem.
+  "exclude": ["test/finding.test.js"]
+}
