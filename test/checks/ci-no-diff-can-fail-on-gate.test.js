@@ -105,4 +105,110 @@ jobs:
     const f = await check.run(repo);
     expect(f.status).toBe("unknown");
   });
+
+  it("is unknown — not pass — when one of two workflows is broken and the other is clean", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".github/workflows/ci.yml": `
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: npm ci
+      - run: npm test
+`,
+        ".github/workflows/broken.yml": "this: is: not: valid: yaml:\n  - [",
+      },
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/broken\.yml/);
+    expect(f.evidence).toMatch(/1 of 2/);
+  });
+
+  it("is unknown when every workflow file is broken", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".github/workflows/a.yml": "this: is: not: valid: yaml:\n  - [",
+        ".github/workflows/b.yml": "also: not: [valid",
+      },
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/a\.yml/);
+    expect(f.evidence).toMatch(/b\.yml/);
+  });
+
+  it("still fails on a real hit even when a sibling workflow is unparseable", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".github/workflows/ci.yml": `
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: npm audit --omit=dev --audit-level=high
+`,
+        ".github/workflows/broken.yml": "this: is: not: valid: yaml:\n  - [",
+      },
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/npm audit/);
+  });
+
+  it("ignores a volatile command that only appears in a comment", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: |
+          # npm audit --audit-level=high (disabled, too noisy)
+          npm ci
+          npm test
+`),
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("pass");
+  });
+
+  it("still catches a genuine volatile command later in the same multi-line block", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: |
+          # npm audit --audit-level=high (disabled, too noisy)
+          npm ci
+          npm audit --omit=dev --audit-level=high
+          npm test
+`),
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/npm audit --omit=dev --audit-level=high/);
+  });
+
+  it("reports the line that actually matched, not the first line of the block", async () => {
+    const repo = createFakeRepo({
+      files: wf(`
+on: pull_request
+jobs:
+  check:
+    steps:
+      - run: |
+          npm ci
+          npm test
+          npm audit --omit=dev --audit-level=high
+`),
+    });
+    const f = await check.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/npm audit --omit=dev --audit-level=high/);
+    expect(f.evidence).not.toMatch(/`npm ci`/);
+  });
 });
