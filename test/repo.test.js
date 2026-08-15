@@ -118,6 +118,18 @@ describe("contract tests (both implementations)", () => {
         }
       });
 
+      // A path beneath a file genuinely is "not there". listFiles already
+      // narrowed on ENOTDIR; readFile did not, so the same shape of absence
+      // threw out of one accessor and returned null from the other.
+      it("returns null for a path underneath a file", async () => {
+        const repo = await makeRepo({ "file.txt": "content" });
+        try {
+          expect(await repo.readFile("file.txt/nested.txt")).toBeNull();
+        } finally {
+          await cleanupRepo(repo);
+        }
+      });
+
       it("returns empty list for missing directory", async () => {
         const repo = await makeRepo({});
         try {
