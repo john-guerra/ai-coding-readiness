@@ -182,7 +182,16 @@ describe("contract tests (both implementations)", () => {
       await mkdir(dirname(fullPath), { recursive: true });
       await writeFile(fullPath, content, "utf8");
     }
-    return createFsRepo(tmpDir);
+    // Inject a runner that fails every subprocess. Without it this helper
+    // shells out to the real `git` and then the real `gh`, so the result would
+    // depend on whether `gh` is installed and authenticated on the machine
+    // running the suite — and on a developer whose TMPDIR sits inside a
+    // checkout, a unit test could make a live network call.
+    return createFsRepo(tmpDir, {
+      exec: async (cmd) => {
+        throw new Error(`refusing to run ${cmd} in a hermetic test`);
+      },
+    });
   };
 
   // Cleanup function

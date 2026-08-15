@@ -185,6 +185,62 @@ describe("createFsRepo.mergedPrFileLists", () => {
     expect(result.reason).toMatch(/could not be read|parse/i);
   });
 
+  // `gh pr list --json files` returns at most 100 paths per PR, silently.
+  // Verified against a real repository: PR kubernetes#141226 reports 100 files
+  // here while the API's own `changed_files` says 301. The truncation is
+  // systematic rather than random — paths come in diff order, so the tail is
+  // always what is lost — which deflates every contention share computed from
+  // it. The merge-commit path has no such cap, so the two sources are NOT the
+  // same quantity, and a caller must be told when it got the capped one.
+  it("reports how many pull requests hit the API's per-PR file cap", async () => {
+    const capped = Array.from({ length: 100 }, (_, i) => `f${i}.js`);
+    const repo = createFsRepo("/r", {
+      exec: fakeExec({
+        "git log": "",
+        "gh pr": ghJson([capped, ["a.js"], capped]),
+      }),
+    });
+    const result = await repo.mergedPrFileLists(50);
+    expect(result.source).toBe("github-api");
+    expect(result.truncated).toBe(2);
+  });
+
+  it("reports no truncation when every pull request fits under the cap", async () => {
+    const repo = createFsRepo("/r", {
+      exec: fakeExec({ "git log": "", "gh pr": ghJson([["a.js"], ["b.js"]]) }),
+    });
+    expect((await repo.mergedPrFileLists(50)).truncated).toBe(0);
+  });
+
+  it("reports no truncation on the merge-commit path, which has no cap", async () => {
+    const repo = createFsRepo("/r", {
+      exec: fakeExec({
+        "git log": gitLog(3),
+        "git diff": Array.from({ length: 400 }, (_, i) => `f${i}.js`).join(
+          "\n",
+        ),
+      }),
+    });
+    const result = await repo.mergedPrFileLists(3);
+    expect(result.source).toBe("merge-commits");
+    expect(result.truncated).toBe(0);
+  });
+
+  // A real execFile rejection reads `Command failed: <cmd>\n<stderr>`, so
+  // taking the first line reports the command we ran and throws away the cause.
+  it("reports the stderr of a failed gh invocation, not the command line", async () => {
+    const err = new Error(
+      "Command failed: gh pr list --state merged --limit 50 --json files\n" +
+        "gh: API rate limit exceeded for user ID 1234\n",
+    );
+    const repo = createFsRepo("/r", {
+      exec: fakeExec({ "git log": "", "gh pr": err }),
+    });
+    const result = await repo.mergedPrFileLists(50);
+    expect(result.reason).toMatch(/rate limit exceeded/i);
+    expect(result.reason).not.toMatch(/Command failed/);
+  });
+
   it("treats a genuinely empty PR history as none, with a reason saying so", async () => {
     const repo = createFsRepo("/r", {
       exec: fakeExec({ "git log": "", "gh pr": "[]" }),
