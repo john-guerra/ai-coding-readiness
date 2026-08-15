@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { createFakeRepo } from "../lib/repo.js";
+import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { createFakeRepo, createFsRepo } from "../lib/repo.js";
 
 describe("createFakeRepo", () => {
   it("reads a file that exists", async () => {
@@ -33,6 +36,30 @@ describe("createFakeRepo", () => {
     expect(await repo.listFiles(".github/workflows")).toEqual([]);
   });
 
+  it("lists root-level files when dir is empty string", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "README.md": "",
+        "package.json": "",
+        "src/index.js": "",
+      },
+    });
+    const found = await repo.listFiles("");
+    expect(found.sort()).toEqual(["README.md", "package.json"]);
+  });
+
+  it("lists root-level files when dir is dot", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "README.md": "",
+        "package.json": "",
+        "src/index.js": "",
+      },
+    });
+    const found = await repo.listFiles(".");
+    expect(found.sort()).toEqual(["README.md", "package.json"]);
+  });
+
   it("returns merge file lists newest first", async () => {
     const repo = createFakeRepo({
       mergedPrFileLists: [["a.js"], ["b.js", "CHANGELOG.md"]],
@@ -49,4 +76,108 @@ describe("createFakeRepo", () => {
     });
     expect(await repo.mergedPrFileLists(2)).toEqual([["a"], ["b"]]);
   });
+});
+
+describe("contract tests (both implementations)", () => {
+  // Helper to create contract test suite
+  /**
+   * @param {string} name
+   * @param {(files: Record<string,string>) => Promise<any>} makeRepo
+   */
+  const buildContractTests = (name, makeRepo) => {
+    describe(name, () => {
+      it("reads a file that exists", async () => {
+        const repo = await makeRepo({ "file.txt": "content" });
+        try {
+          expect(await repo.readFile("file.txt")).toBe("content");
+        } finally {
+          await cleanupRepo(repo);
+        }
+      });
+
+      it("returns null for a missing file", async () => {
+        const repo = await makeRepo({});
+        try {
+          expect(await repo.readFile("nope.txt")).toBeNull();
+        } finally {
+          await cleanupRepo(repo);
+        }
+      });
+
+      it("lists root-level files with empty string", async () => {
+        const repo = await makeRepo({
+          "README.md": "content",
+          "package.json": "content",
+          "src/index.js": "nested",
+        });
+        try {
+          const found = await repo.listFiles("");
+          expect(found.sort()).toEqual(["README.md", "package.json"]);
+        } finally {
+          await cleanupRepo(repo);
+        }
+      });
+
+      it("returns empty list for missing directory", async () => {
+        const repo = await makeRepo({});
+        try {
+          expect(await repo.listFiles("nonexistent")).toEqual([]);
+        } finally {
+          await cleanupRepo(repo);
+        }
+      });
+
+      it("returns empty merge list for non-git directory", async () => {
+        const repo = await makeRepo({});
+        try {
+          expect(await repo.mergedPrFileLists(10)).toEqual([]);
+        } finally {
+          await cleanupRepo(repo);
+        }
+      });
+    });
+  };
+
+  // Create fake repo
+  /**
+   * @param {Record<string,string>} files
+   * @returns {Promise<any>}
+   */
+  const makeFakeRepo = async (files) => {
+    /** @type {Record<string,string>} */
+    const fileMap = {};
+    for (const [path, content] of Object.entries(files)) {
+      fileMap[path] = content;
+    }
+    return createFakeRepo({ files: fileMap });
+  };
+
+  // Create fs repo in temp directory
+  /**
+   * @param {Record<string,string>} files
+   * @returns {Promise<any>}
+   */
+  const makeFsRepo = async (files) => {
+    const tmpDir = await mkdtemp(join(tmpdir(), "repo-test-"));
+    for (const [path, content] of Object.entries(files)) {
+      const fullPath = join(tmpDir, path);
+      await mkdir(dirname(fullPath), { recursive: true });
+      await writeFile(fullPath, content, "utf8");
+    }
+    return createFsRepo(tmpDir);
+  };
+
+  // Cleanup function
+  /**
+   * @param {any} repo
+   * @returns {Promise<void>}
+   */
+  const cleanupRepo = async (repo) => {
+    if (repo.root.startsWith(tmpdir())) {
+      await rm(repo.root, { recursive: true, force: true });
+    }
+  };
+
+  buildContractTests("fake repo", makeFakeRepo);
+  buildContractTests("fs repo", makeFsRepo);
 });
