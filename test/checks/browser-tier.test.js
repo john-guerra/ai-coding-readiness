@@ -119,6 +119,52 @@ describe("ci.flake-observability", () => {
     expect((await flake.run(repo)).status).toBe("pass");
   });
 
+  // `retries: 0` is behaviourally identical to no retries key at all: no retry
+  // happens, so Playwright never classifies a test as `flaky`, so the flake
+  // rate this check exists to make measurable stays unmeasurable. Reporting
+  // `pass` on it is a false green on the exact condition being detected.
+  it("fails when retries is the literal 0, which is identical to leaving it unset", async () => {
+    const repo = createFakeRepo({
+      files: { [PW_CONFIG]: "export default { retries: 0, workers: 1 };" },
+    });
+    const f = await flake.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/retries.*\b0\b/);
+    expect(f.fix).toMatch(/retries/);
+  });
+
+  it("fails when the literal 0 is the last entry before the closing brace", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: `export default {
+  workers: 1,
+  retries: 0
+};`,
+      },
+    });
+    expect((await flake.run(repo)).status).toBe("fail");
+  });
+
+  // Only a bare literal 0 is a finding. Anything this textual read cannot
+  // evaluate — a ternary on CI, a variable, a helper call — may well be
+  // non-zero at run time, and a `fail` there would be a confidently wrong
+  // remediation.
+  it("passes when a 0 appears only inside an expression that was not evaluated", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default { retries: process.env.CI ? 2 : 0, workers: 1 };",
+      },
+    });
+    expect((await flake.run(repo)).status).toBe("pass");
+  });
+
+  it("passes when retries is read off a variable rather than written literally", async () => {
+    const repo = createFakeRepo({
+      files: { [PW_CONFIG]: "export default { retries: RETRY_COUNT, workers: 1 };" },
+    });
+    expect((await flake.run(repo)).status).toBe("pass");
+  });
+
   it("fails, not passes, when retries is only mentioned in a comment", async () => {
     const repo = createFakeRepo({
       files: { [PW_CONFIG]: "// retries: not set on purpose" },

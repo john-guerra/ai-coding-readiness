@@ -46,6 +46,32 @@ describe("concurrency.pr-path-contention", () => {
     expect(f.status).toBe("unknown");
   });
 
+  // The instrument must be able to produce a non-trivial result before its
+  // output means anything. At N=1 every file in that one merge commit sits at
+  // 100% and clears a 50% threshold by construction, so a "profile" from it
+  // measures the sample size and nothing else.
+  it("is unknown, not fail, when one merge commit would put every file it touched at 100%", async () => {
+    const f = await check.run(
+      createFakeRepo({ mergedPrFileLists: [["a.js", "b.js", "c.js"]] })
+    );
+    expect(f.status).toBe("unknown");
+    expect(f.evidence).toMatch(/\b1\b/);
+    expect(f.evidence).toMatch(/merge commit/i);
+  });
+
+  it("is unknown at 9 merge commits and reports a verdict at 10", async () => {
+    /** @param {number} n */
+    const lists = (n) =>
+      Array.from({ length: n }, (_, i) => [`src/f${i}.js`, "CHANGELOG.md"]);
+
+    const nine = await check.run(createFakeRepo({ mergedPrFileLists: lists(9) }));
+    expect(nine.status).toBe("unknown");
+    expect(nine.evidence).toMatch(/\b9\b/);
+
+    const ten = await check.run(createFakeRepo({ mergedPrFileLists: lists(10) }));
+    expect(ten.status).toBe("fail");
+  });
+
   it("fails on a contended metadata file and prescribes changesets", async () => {
     const lists = Array.from({ length: 10 }, (_, i) => [
       `src/f${i}.js`,
