@@ -1,6 +1,6 @@
 # `ai-coding-readiness` — design
 
-**Date:** 2026-08-15 · **Revision:** 2 (after two independent review passes)
+**Date:** 2026-08-15 · **Revision:** 4 (after three independent review passes)
 **Status:** draft
 **Ships as:** the public repository `john-guerra/ai-coding-readiness`,
 installable as a Claude Code plugin. Command namespace `/ai-ready`.
@@ -32,8 +32,12 @@ enough to assert it is one.
 
 - **Not a greenfield scaffolder.** GitHub Spec Kit owns that lane; this is
   brownfield audit-and-adapt.
-- **Not a rules engine.** `repolinter` proved that shape is a graveyard. ~13
+- **Not a rules engine.** `repolinter` proved that shape is a graveyard. 16
   hardcoded checks as plain functions; no configurable rulesets.
+- **Not a guide writer.** `/init` already interviews, explores with a subagent,
+  proposes before writing, and ingests Cursor/Copilot/Devin/Windsurf/Cline rule
+  files. We invoke it; we do not reimplement it. What we add is the material
+  `/init` cannot know — see §10.
 - **Not a code reviewer.** `/code-review`, `/security-review`, and
   `feature-dev:code-reviewer` exist and are better resourced.
 - **Not a TDD or verification skill.** `superpowers` ships two.
@@ -181,6 +185,7 @@ months as a finding — an undated waiver is permanent, invisible debt.
 {
   "id": "ci.e2e-sharded",
   "tier": 1,
+  "layer": "deterministic" | "judgment",
   "status": "pass" | "fail" | "unknown",
   "effort": "S" | "M" | "L",
   "evidence": "...",
@@ -205,6 +210,14 @@ Five rules govern the set:
    neither.
 5. **A check may report a finding it cannot auto-fix, provided it says so.**
    What it may never do is prescribe a fix that does not apply.
+6. **`layer` says who evaluated the check, and judgment checks are
+   advisory-only.** `bin/audit.mjs` runs only `deterministic` checks — that is
+   what makes its output reproducible when someone files a bug, which is §3's
+   entire rationale. Checks needing a model (marked **⚖** below) are evaluated
+   by the `/ai-ready:audit` *skill* after the binary returns, are never unit-
+   tested against an exact expected output, and never gate anything. This is
+   §8's own rule applied to the audit itself: **mechanical rules gate, model
+   judgment advises.**
 
 ### v0.1 check set
 
@@ -215,22 +228,44 @@ governs *how many checks are installed*. They compose.
 
 | id | T | Detects | Precondition | Remediation |
 | --- | --- | --- | --- | --- |
-| `guide.exists` | 0 | No agent guide, or one that never names build/test/run | — | `CLAUDE.md` + `AGENTS.md` from the interview |
+| `guide.exists` **⚖** | 0 | No agent guide, or one that never names build/test/run | — | **Invoke `/init`** (`CLAUDE_CODE_NEW_INIT=1`), which already interviews, explores with a subagent, and proposes before writing. We then add only the regions `/init` cannot know: guardrails, concurrency protocol, validation policy |
 | `guide.guardrails` | 0 | No "never touch" / destructive-action policy | — | Guardrails region + `deny` list in `.claude/settings.json` |
-| `guide.context-budget` | 0 | **Total instruction lines loaded every session** — the guide plus everything it `@`-imports — against the official <200-line target. Imports do **not** reduce context; they load at launch | — | Move path-specific content into `.claude/rules/` with `paths:` frontmatter, so a rule loads when Claude touches matching files and never otherwise. Defer to `/doctor`'s trim check where available |
-| `guide.gold-standard` | 1 | The guide names no exemplary file that demonstrates its conventions | Requires a human to nominate the file | Interview question → a guide region pointing at it, plus correct/incorrect snippets for the rules that most often get broken |
-| `test.assertion-free` | 1 | Tests containing no assertion at all | — | Reported per file with the test name; no auto-fix — a test with no assertion needs an author, not a generator |
+| `guide.context-budget` | 0 | The **always-loaded** instruction budget — the guide plus unconditional `@`-imports — against the documented <200-line target. Imports do **not** reduce context; they load at launch. Correctly `paths:`-scoped rules count as *out* of budget, which is what makes the fix re-verifiable | **Only content with an identifiable path scope can move.** Measure that fraction before prescribing | Relocate path-scopable content to `.claude/rules/` with `paths:` frontmatter. **Everything else routes to §8 for mechanization, not relocation** — see the note below. Defer to `/doctor`'s trim check where available |
+| `test.assertion-free` | 1 | Tests containing no assertion at all | — | Reported per file and test name; **no auto-fix** — a test with no assertion needs an author, not a generator. **Its pass is never evidence that tests are meaningful** (see note) |
+| `github.contribution-scaffold` | 1 | Composite: issue templates · `PULL_REQUEST_TEMPLATE.md` · `CODEOWNERS` | — | Writes all three. A bug template that captures repro steps institutionalizes "verify against the reported scenario"; CODEOWNERS is the mechanism large teams actually use for the *human* half of §6 |
 | `repo.hygiene` | 0 | Missing lockfile; `.gitignore` gaps; secret-shaped tracked strings | Lockfile generation resolves the graph *now* | `npm i --package-lock-only`, **flagged as requiring a green CI run** — it can silently move transitive versions off what the maintainer has been running |
 | `ci.gate-completeness` | 1 | CI does not resolve to format → test → build (parsed from the job graph, never grepped) | — | Adds the missing steps |
 | `ci.no-diff-can-fail-on-gate` | 1 | Merge-gate steps that fail without a code change — `npm audit`, license scans, external APIs | — | Moves them to a scheduled job that **updates one search-by-title issue, never files per run** (§11) |
 | `ci.e2e-sharded` | 1 | Browser tier unsharded on the merge gate | **No single spec dominates**; special fixtures (e.g. a big-library spec) must be set up in whichever shard draws them | Measure per-file duration; split dominant files; *then* `--shard` matrix. Each shard gets its own runner → own server → own temp dir, so hermeticity holds with **no test rewrites** |
 | `ci.flake-observability` | 1 | The browser tier cannot report flakes at all (no `retries` configured) | — | `retries: 1` in CI + report the `flaky` count. One line; converts an unmeasurable into a measurable (§2) |
 | `quality.static-analysis` | 1 | No linter / typechecker | **Measure the finding count first.** Above threshold the fix is a baseline, not a gate | **Baseline-and-ratchet**: lint changed files at the hook rung; at CI a checked-in baseline or `--max-warnings <current>`, so the gate is *no new violations*, never *zero violations* |
-| `security.workflow-hygiene` | 1 | `pull_request_target` on untrusted input; unpinned third-party actions; over-broad `permissions:`; untrusted text in `run:` | — | SHA pins, minimal permissions, `env:`-passed values. **Composite with Dependabot `github-actions`** — a rotting SHA pin is worse than a tag, which at least receives upstream patches |
+| `security.workflow-hygiene` | 1 | `pull_request_target` on untrusted input; unpinned third-party actions; over-broad `permissions:`; untrusted text in `run:` | Auto-fix applies only to workflows **this tool authored** | **Auto-fix: SHA pins only**, composite with Dependabot `github-actions` (a rotting SHA pin is worse than a tag, which at least receives upstream patches). **Report-only** for narrowing `permissions:` and rewriting `run:` on pre-existing workflows — per rule 5. Narrowing permissions fails at *runtime*, weeks later, in someone else's release, with our name on the commit |
 | `concurrency.pr-path-contention` | 2 | Ranked **contention profile**: file × PR-frequency × size × churn | — | *Split by kind:* shared **metadata** files (version, changelog) → changesets/towncrier + `.gitattributes`. **God-files** → reported as a finding with **no auto-fix**, routed to `enforce-a-rule` and a size budget |
 | `concurrency.parallel-suite` | 2 | Suite cannot run twice concurrently | — | *By failure mode:* port collision → env-parameterized ports [S] · shared temp dir/DB → per-run temp [S] · shared remote fixture or global lock → **reported, may not be fixable** [L] |
 | `concurrency.claim-composite` | 2 | Claim mechanism without close-out or labels, or vice versa | — | Install the missing half, or remove the orphan |
-| `docs.unenforced-invariants` | 2 | MUST/NEVER statements with no mechanical backing; **plus docs asserting numbers the repo contradicts** | — | Per §8: tests, lint rules, CI greps. Stale numbers corrected in place |
+| `docs.unenforced-invariants` **⚖** | 2 | MUST/NEVER statements with no mechanical backing; **plus docs asserting numbers the repo contradicts** | — | Per §8: tests, lint rules, CI greps. Stale numbers corrected in place |
+
+**⚖ = judgment layer.** Evaluated by the skill, not the binary; advisory only;
+never gates. Two of sixteen.
+
+**Two notes the check table cannot carry.**
+
+*On `guide.context-budget`:* `.claude/rules/` reduces context **only** through
+`paths:` scoping, so only path-scopable content can move. On the reference repo,
+593 of 1,595 always-loaded lines are pathless process knowledge — CI gotchas,
+`gh` traps, release procedure, "a cancelled job renders identically to a failed
+one." Relocating that either changes nothing (no `paths:` → still always loaded)
+or, with a *guessed* `paths:`, makes the rule load **less often than the
+`@`-import did** — which weakens exactly the persuasion §8 already argues is
+insufficient. So the remediation is explicitly two-track: relocate what has a
+path, **mechanize what does not**.
+
+*On `test.assertion-free`:* it is cheap and deterministic and worth having, but
+it is a floor, not a signal. On the reference repo **zero of 52 e2e specs lack an
+assertion**, and that same repo shipped two vacuous e2e tests that only mutation
+testing caught. Vacuous ≠ assertion-free: a test can assert something that is
+always true. Its pass must never be reported as evidence that tests are
+meaningful — that claim belongs to rung 6 of §8, deferred to nightly.
 
 `concurrency.parallel-suite` remains the highest-value check: one command, no
 configuration, a direct empirical proxy for *"can two agents work here at
@@ -400,6 +435,27 @@ than any CI check, because it fires *before* the agent walks away — and per th
 official docs, hooks apply regardless of what the model decides, where guide
 prose does not. CI remains the backstop for work that arrives by other paths.
 
+> **This hook is the single most dangerous artifact the tool writes**, and it
+> gets written into every adopting repo. `Stop` fires **whenever Claude finishes
+> responding — not only at task completion.** A naive version therefore trips on
+> "what does this function do?". Claude Code caps consecutive blocks (8 by
+> default), so the failure is not infinite; it is worse in kind — eight wasted
+> model turns on an unrelated conversation, silently, looking like the model
+> being stupid. Four requirements, none optional:
+>
+> 1. **`stop_hook_active` recursion guard first**, before any other logic —
+>    Claude Code sets it session-wide while a Stop is in flight.
+> 2. **A precondition that the session actually touched code** *and* that an
+>    issue or PR is in play. Track it with a `PostToolUse` hook recording
+>    touched paths per session; a read-only conversation must never be blocked.
+> 3. **Signal by exit code 2 + stderr.** `Stop` is not a member of the
+>    `hookSpecificOutput` union, so structured output will not block.
+> 4. **A self-block budget well under the cap**, so a malformed handoff
+>    degrades to a warning rather than eating the turn allowance.
+>
+> Anthropic's shipped `security-guidance` plugin implements this pattern and is
+> the reference to follow.
+
 **2b — Enforced at PR open, not at closeout.** The backstop check runs on
 `pull_request: [opened, edited, synchronize]` as a **required status check**,
 because that is where the leverage is: `pr-closeout.yml` fires on PR *closed*,
@@ -437,8 +493,12 @@ the approval fatigue the source checklist warns about.
 
 ## 10. The interview
 
-**Never ask what the audit can detect.** Detected facts are presented as one
-batch of *confirmations*; only the genuinely unmeasurable is asked.
+**Never ask what the audit can detect, and never ask what `/init` already
+asks.** `/init` covers build commands, conventions, project layout, and existing
+rule files from other agents. This interview covers only what `/init` has no
+reason to ask about — the operating model of the repo. Detected facts are
+presented as one batch of *confirmations*; only the genuinely unmeasurable is
+asked.
 
 | Asks | Why unmeasurable | Default |
 | --- | --- | --- |
@@ -580,9 +640,17 @@ shape is a known graveyard, and the differentiator must be AI-agent-specific
 mechanism. Backstage's scaffolder shows scaffold-then-drift is the whole
 problem, which is why §4 is not optional.
 
-**Genuinely novel:** the interview → one-PR flow on a *brownfield* repo; the
-contention profile; the unenforced-invariant report; the enforced validation
-handoff.
+**Genuinely novel, stated narrowly on purpose.** Nothing in the box measures any
+of these: contention profiling · CI-failure attribution · feedback-loop health ·
+the parallel-suite probe · flake observability · the concurrency harness (claim
+protocol, close-out, changesets, merge queue, CODEOWNERS) · the enforced
+validation handoff · the unenforced-invariant report.
+
+The guide-writing half is **not** ours and the spec no longer pretends
+otherwise: `guide.exists` invokes `/init`, and §10 asks only what `/init` has no
+reason to ask. The one-sentence pitch that survives all three review passes:
+**this measures how a repository behaves under concurrent contributors, and
+turns the findings into enforcement.**
 
 ---
 

@@ -44,7 +44,13 @@ feature — because prose in a markdown file is persuasion, not enforcement.
 - **Unenforced invariants** — which stated MUST/NEVER rules have no test, lint
   rule, or CI check behind them.
 - **The harness basics** — agent guide, guardrails, lockfile, CI completeness,
-  static analysis, issue/PR templates, branch protection.
+  static analysis, issue/PR templates, CODEOWNERS.
+
+It **defers rather than duplicates**: `/init` writes the agent guide (it already
+interviews, explores, and ingests Cursor/Copilot/Devin rule files), `/doctor`
+trims an over-long one, OpenSSF Scorecard owns security posture, and changesets
+owns changelog concurrency. What's left — and what nothing else measures — is
+**how a repository behaves under concurrent contributors.**
 
 ## Scope, honestly
 
