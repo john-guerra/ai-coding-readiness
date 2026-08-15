@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+.DS_Store
+.claude/settings.local.json
+.claude/worktrees/
+*.local.md
