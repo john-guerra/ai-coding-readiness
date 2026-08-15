@@ -97,6 +97,74 @@ jobs:
     expect(f.status).toBe("unknown");
   });
 
+  // Dropping the whole line whenever an install matched took the test
+  // invocation down with it when both sat in one command. The job then had no
+  // browser tier at all, so a genuinely unsharded browser job read as
+  // `unknown` on its own — and as `pass` beside a sharded sibling, which is
+  // the report announcing the tier is sharded while an unsharded job sits
+  // unexamined in the same workflow.
+  it("detects the tier when the install and the test run in one command", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    steps:
+      - run: npx playwright install --with-deps && npx playwright test
+`,
+      },
+    });
+    const f = await sharded.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/"e2e"/);
+  });
+
+  it("still fails the one-liner job when a sibling job is properly sharded", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  modern:
+    strategy:
+      matrix:
+        shard: [1, 2]
+    steps:
+      - run: npx playwright test --shard=\${{ matrix.shard }}/2
+  legacy:
+    steps:
+      - run: npx playwright install --with-deps && npx playwright test
+`,
+      },
+    });
+    const f = await sharded.run(repo);
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/legacy/);
+    expect(f.evidence).not.toMatch(/modern/);
+  });
+
+  it("passes when the one-liner's test invocation is itself sharded", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: "export default {};",
+        ".github/workflows/ci.yml": `
+on: [pull_request]
+jobs:
+  e2e:
+    strategy:
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - run: npx playwright install --with-deps && npx playwright test --shard=\${{ matrix.shard }}/4
+`,
+      },
+    });
+    expect((await sharded.run(repo)).status).toBe("pass");
+  });
+
   // A shard matrix that no command consumes runs the WHOLE suite once per
   // matrix leg — strictly worse than not sharding at all, and it was
   // reported green.
