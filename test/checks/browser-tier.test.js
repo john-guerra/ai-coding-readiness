@@ -133,6 +133,46 @@ describe("ci.flake-observability", () => {
     expect((await flake.run(repo)).status).toBe("fail");
   });
 
+  it("passes when the retries key is double-quoted", async () => {
+    const repo = createFakeRepo({
+      files: { [PW_CONFIG]: 'export default { "retries": 1 };' },
+    });
+    expect((await flake.run(repo)).status).toBe("pass");
+  });
+
+  it("passes when the retries key is single-quoted", async () => {
+    const repo = createFakeRepo({
+      files: { [PW_CONFIG]: "export default { 'retries': 1 };" },
+    });
+    expect((await flake.run(repo)).status).toBe("pass");
+  });
+
+  it("passes when a quoted retries key sits on its own line in a multiline config", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: `export default {
+  "retries": 2,
+  workers: 1,
+};`,
+      },
+    });
+    expect((await flake.run(repo)).status).toBe("pass");
+  });
+
+  it("fails, not passes, when retries only appears inside a block comment", async () => {
+    const repo = createFakeRepo({
+      files: {
+        [PW_CONFIG]: `export default {
+/*
+  retries: 1,
+*/
+  workers: 1,
+};`,
+      },
+    });
+    expect((await flake.run(repo)).status).toBe("fail");
+  });
+
   it("is unknown when there is no browser config to read", async () => {
     expect((await flake.run(createFakeRepo({ files: {} }))).status).toBe("unknown");
   });
