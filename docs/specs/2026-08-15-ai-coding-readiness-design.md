@@ -217,6 +217,9 @@ governs *how many checks are installed*. They compose.
 | --- | --- | --- | --- | --- |
 | `guide.exists` | 0 | No agent guide, or one that never names build/test/run | — | `CLAUDE.md` + `AGENTS.md` from the interview |
 | `guide.guardrails` | 0 | No "never touch" / destructive-action policy | — | Guardrails region + `deny` list in `.claude/settings.json` |
+| `guide.context-budget` | 0 | **Total instruction lines loaded every session** — the guide plus everything it `@`-imports — against the official <200-line target. Imports do **not** reduce context; they load at launch | — | Move path-specific content into `.claude/rules/` with `paths:` frontmatter, so a rule loads when Claude touches matching files and never otherwise. Defer to `/doctor`'s trim check where available |
+| `guide.gold-standard` | 1 | The guide names no exemplary file that demonstrates its conventions | Requires a human to nominate the file | Interview question → a guide region pointing at it, plus correct/incorrect snippets for the rules that most often get broken |
+| `test.assertion-free` | 1 | Tests containing no assertion at all | — | Reported per file with the test name; no auto-fix — a test with no assertion needs an author, not a generator |
 | `repo.hygiene` | 0 | Missing lockfile; `.gitignore` gaps; secret-shaped tracked strings | Lockfile generation resolves the graph *now* | `npm i --package-lock-only`, **flagged as requiring a green CI run** — it can silently move transitive versions off what the maintainer has been running |
 | `ci.gate-completeness` | 1 | CI does not resolve to format → test → build (parsed from the job graph, never grepped) | — | Adds the missing steps |
 | `ci.no-diff-can-fail-on-gate` | 1 | Merge-gate steps that fail without a code change — `npm audit`, license scans, external APIs | — | Moves them to a scheduled job that **updates one search-by-title issue, never files per run** (§11) |
@@ -329,10 +332,12 @@ the thesis.
 | --- | --- | --- |
 | 1 | **Make it impossible** (API shape) | "Long ops are jobs" holds if the only entry point returns `{jobId}` |
 | 2 | **Registry-driven test** | One test enumerates every *registered* operation and asserts each exposes its scope control — new features covered the day they register |
-| 3 | **Lint rule** | "`$:` must never depend on a `bind:this` element" is a plain AST rule. **Currently unavailable — the repo has no linter** |
-| 4 | **CI grep / parity check** | every shortcut ⟺ a `ShortcutsOverlay` row; every file-serving route ⟺ `safeResolve.js` |
-| 5 | PR-template checkbox | — |
-| 6 | Prose in the agent guide | **where all three contracts live today** |
+| 3 | **Claude Code hook** — `PreToolUse` blocks a disallowed edit; `Stop` blocks the turn from ending until a check passes | The official enforcement layer: the docs are explicit that *"CLAUDE.md instructions shape Claude's behavior but are not a hard enforcement layer"* and that a hook applies *"regardless of what Claude decides"*. Cheap, immediate, and it fires before the agent can walk away |
+| 4 | **Lint rule** | "`$:` must never depend on a `bind:this` element" is a plain AST rule. **Currently unavailable — the repo has no linter** |
+| 5 | **CI grep / parity check** | every shortcut ⟺ a `ShortcutsOverlay` row; every file-serving route ⟺ `safeResolve.js` |
+| 6 | **Mutation testing** | The general form of the revert-to-confirm-red rule. Already proven in the reference repo: *two vacuous e2e tests shipped and mutation testing is what exposed them.* Nightly, never a gate — it is slow |
+| 7 | PR-template checkbox | — |
+| 8 | Prose in the agent guide | **where all three contracts live today** |
 
 **Deliverables:**
 
@@ -382,7 +387,20 @@ per-PR version, so a version-keyed handoff gives the validator nothing to check
 they are running the right build. Repos on the CAS escape hatch may additionally
 show the version.
 
-**2 — Enforced at PR open, not at closeout.** The check runs on
+**Not web-only.** The consumed artifact may be a rendered document, a CLI
+output, or a packaged binary. The reference repo's sharpest instance of this
+failure was a generated `.docx` that passed XML text checks and still had broken
+bullets, collapsed headers, and wrong table styling — caught only by rendering
+it to PDF and looking. `where:` therefore accepts a render command, not just a
+URL.
+
+**2a — Enforced first by a `Stop` hook, then by CI.** A `Stop` hook blocks the
+turn from ending until the handoff parses. That is a better enforcement point
+than any CI check, because it fires *before* the agent walks away — and per the
+official docs, hooks apply regardless of what the model decides, where guide
+prose does not. CI remains the backstop for work that arrives by other paths.
+
+**2b — Enforced at PR open, not at closeout.** The backstop check runs on
 `pull_request: [opened, edited, synchronize]` as a **required status check**,
 because that is where the leverage is: `pr-closeout.yml` fires on PR *closed*,
 by which point the code is already merged.
@@ -499,7 +517,7 @@ remains is defensible on principle without leaning on unsupported evidence:
 
 ## 13. Scope
 
-**v0.1 ships:** node pack · the 13 checks in §5 · `/ai-ready:audit` and
+**v0.1 ships:** node pack · the 16 checks in §5 · `/ai-ready:audit` and
 `/ai-ready:adapt` · skills `adapt-repo`, `working-issues`, `enforce-a-rule` ·
 marked regions + manifest + idempotency gate · the validation block and its
 **PR-open required check**.
@@ -537,7 +555,23 @@ marked regions + manifest + idempotency gate · the validation block and its
 
 **Depend, do not rebuild:** OpenSSF Scorecard · changesets / towncrier ·
 nx / turbo `affected` (detect the tool, do not build selection) · husky +
-lint-staged / pre-commit · `claude init`.
+lint-staged / pre-commit · Stryker (mutation testing).
+
+**Overlap with Claude Code itself — stated plainly, because it is substantial.**
+`/init` under `CLAUDE_CODE_NEW_INIT=1` already runs an interactive multi-phase
+flow: it asks which artifacts to set up, explores with a subagent, fills gaps
+with follow-up questions, and presents a reviewable proposal before writing. It
+also already ingests Cursor, Copilot, Devin, Windsurf, and Cline rule files.
+`/doctor` already proposes trims for an over-long guide. **This tool must invoke
+or assume those rather than reimplement them.** What remains genuinely ours: the
+brownfield *measurements* (contention profile, CI-failure attribution, feedback
+loop health), the unenforced-invariant report, the concurrency harness, and
+one-PR delivery with gated GitHub-side actions.
+
+**`.claude/rules/` is the supported mechanism for splitting instructions** —
+path-scoped, loaded only when Claude touches matching files. `@`-imports are
+explicitly *not* a context reduction; they load at launch. Generated guides use
+rules for anything path-specific.
 
 **Positioning:** Spec Kit owns greenfield SDD scaffolding — defer to it.
 `repolinter` is archived, and its lesson is twofold: the generic-rules-engine
@@ -552,7 +586,54 @@ handoff.
 
 ---
 
-## 15. Open risks
+## 15. Two lanes for browser work, and story↔test linkage
+
+### Browser verification has two lanes, and conflating them is the failure mode
+
+| | Interactive verification | Regression tier |
+| --- | --- | --- |
+| Tool | claude-in-chrome (MCP) | Playwright |
+| Job | "does this work right now, on real data?" | "does this still work, on every PR?" |
+| Runs in | an agent's session, reusing the developer's browser | CI, headless, sharded |
+| Costs | tokens — materially fewer than per-navigation snapshot dumps | runner minutes + maintenance |
+
+`adapt` installs claude-in-chrome in `.mcp.json` for the verification lane and
+Playwright for the regression tier, **plus one guardrail in the guide**:
+
+> A live-browser verification is **not** a substitute for a regression test. A
+> fixed bug still gets a test at the tier that would have caught it, in the same
+> commit.
+
+Without that line, "I verified it in the browser" becomes the reason a fix ships
+with no durable protection — verification without an asset.
+
+### Story ↔ test linkage: install the convention, defer the report
+
+User-story *management* is out of scope; GitHub Issues already holds them. What
+is in scope is **traceability**, which is the same shape as every other finding
+in this design: an artifact exists but nothing links it to what it serves — tags
+with no runner, rules with no enforcement, tests with no story.
+
+- **v0.1 installs the convention.** Issue templates gain an *Acceptance
+  criteria* section; the guide documents the test↔issue reference convention.
+- **v0.2 ships the coverage report** — stories with no test, tests tracing to no
+  story, stories closed whose test was later deleted. This is the PM-facing
+  view, and it is deferred for the reason §2's method rule demands: the report
+  cannot produce a non-trivial result until repos have been running the
+  convention long enough to generate linkage.
+
+### The audit must be findings-first and bounded
+
+Session-usage analysis of the reference repo found **five separate sessions
+where an open-ended review was abandoned mid-exploration, producing zero
+output**. An audit that sweeps silently and reports at the end will be
+interrupted before it reports. `/ai-ready:audit` therefore emits findings
+incrementally, cheapest checks first, and every check carries a bounded cost —
+never a long silent exploration phase.
+
+---
+
+## 16. Open risks
 
 1. **The `fix` field is the liability surface.** A confidently wrong remediation
    is worse than no check. Mitigated by preconditions (now applied, not just
