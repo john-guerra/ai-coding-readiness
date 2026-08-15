@@ -146,6 +146,7 @@ describe("concurrency.pr-path-contention", () => {
     const bigLock = "a\n".repeat(6000);
     const lists = Array.from({ length: 10 }, (_, i) => [
       `src/f${i}.js`,
+      "CHANGELOG.md",
       "package-lock.json",
     ]);
     const f = await check.run(
@@ -158,6 +159,75 @@ describe("concurrency.pr-path-contention", () => {
     expect(f.evidence).toMatch(/package-lock\.json/);
     expect(f.fix).toMatch(/machine-generated|regenerat/i);
     expect(f.fix).not.toMatch(/no automatic fix/i);
+  });
+
+  // A lockfile is SUPPOSED to change on every PR that touches a dependency.
+  // Failing on it produced a `fail` whose own fix said the contention was
+  // expected and not a design problem — a finding arguing against itself.
+  it("passes when the only contended file is machine-generated", async () => {
+    const lists = Array.from({ length: 20 }, (_, i) => [
+      `src/f${i}.js`,
+      "package-lock.json",
+    ]);
+    const f = await check.run(createFakeRepo({ mergedPrFileLists: lists }));
+    expect(f.status).toBe("pass");
+    // Still reported, because it is context for whoever reads the profile.
+    expect(f.evidence).toMatch(/package-lock\.json/);
+  });
+
+  // The flagship demo contradicted itself: it printed the changesets
+  // remediation and then, three lines later, "This finding has no automatic
+  // fix; it needs a person." A co-contended lockfile — package.json plus
+  // package-lock.json, the most common Node shape there is — is not an
+  // obstacle to auto-fixing the metadata half.
+  it("stays auto-fixable when a lockfile is contended alongside package.json", async () => {
+    const lists = Array.from({ length: 20 }, (_, i) => [
+      `src/f${i}.js`,
+      "package.json",
+      "package-lock.json",
+    ]);
+    const f = await check.run(createFakeRepo({ mergedPrFileLists: lists }));
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/package\.json/);
+    expect(f.evidence).toMatch(/package-lock\.json/);
+    expect(f.fix).toMatch(/changesets|towncrier/i);
+    expect(f.autoFixable).toBe(true);
+  });
+
+  // A tool that tells people their line counts are stale has to agree with
+  // `wc -l`, which counts newline characters — not split("\n").length, which
+  // reads the trailing newline as one more line.
+  it("counts lines the way wc -l does, not one higher", async () => {
+    const lists = Array.from({ length: 10 }, (_, i) => [
+      `src/f${i}.js`,
+      "CHANGELOG.md",
+    ]);
+    const f = await check.run(
+      createFakeRepo({
+        files: { "CHANGELOG.md": "one\ntwo\nthree\n" },
+        mergedPrFileLists: lists,
+      })
+    );
+    expect(f.evidence).toMatch(/3 lines/);
+    expect(f.evidence).not.toMatch(/4 lines/);
+  });
+
+  // The god-file remediation used to ignore the measurement it had just
+  // made, which is the one thing it has that generic advice does not.
+  it("cites the measured size and share in the god-file remediation", async () => {
+    const lists = Array.from({ length: 20 }, (_, i) => [
+      `src/f${i}.js`,
+      "ui/src/App.svelte",
+    ]);
+    const f = await check.run(
+      createFakeRepo({
+        files: { "ui/src/App.svelte": "x\n".repeat(7409) },
+        mergedPrFileLists: lists,
+      })
+    );
+    expect(f.status).toBe("fail");
+    expect(f.fix).toMatch(/7,409 lines/);
+    expect(f.fix).toMatch(/100% of/);
     expect(f.autoFixable).toBe(false);
   });
 
