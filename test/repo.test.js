@@ -64,7 +64,7 @@ describe("createFakeRepo", () => {
     const repo = createFakeRepo({
       mergedPrFileLists: [["a.js"], ["b.js", "CHANGELOG.md"]],
     });
-    expect(await repo.mergedPrFileLists(10)).toEqual([
+    expect((await repo.mergedPrFileLists(10)).lists).toEqual([
       ["a.js"],
       ["b.js", "CHANGELOG.md"],
     ]);
@@ -74,7 +74,7 @@ describe("createFakeRepo", () => {
     const repo = createFakeRepo({
       mergedPrFileLists: [["a"], ["b"], ["c"]],
     });
-    expect(await repo.mergedPrFileLists(2)).toEqual([["a"], ["b"]]);
+    expect((await repo.mergedPrFileLists(2)).lists).toEqual([["a"], ["b"]]);
   });
 });
 
@@ -142,7 +142,13 @@ describe("contract tests (both implementations)", () => {
       it("returns empty merge list for non-git directory", async () => {
         const repo = await makeRepo({});
         try {
-          expect(await repo.mergedPrFileLists(10)).toEqual([]);
+          const result = await repo.mergedPrFileLists(10);
+          expect(result.lists).toEqual([]);
+          // Absence must arrive with a stated cause, not as a bare empty list —
+          // "this repo squash-merges" and "the CLI is not authenticated" are
+          // different findings and used to render as the same shrug.
+          expect(result.source).toBe("none");
+          expect(result.reason).toBeTruthy();
         } finally {
           await cleanupRepo(repo);
         }
