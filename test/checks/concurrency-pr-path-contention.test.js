@@ -25,6 +25,19 @@ describe("profile", () => {
     const rows = profile([["src/app.js"]], { "src/app.js": 7409 });
     expect(rows[0].lines).toBe(7409);
   });
+
+  it("counts a path once per PR even if it appears twice in that PR's file list", () => {
+    const rows = profile([["a.js", "a.js", "b.js"]], {});
+    expect(rows.find((r) => r.path === "a.js")?.count).toBe(1);
+  });
+
+  it("classifies lockfiles as generated, not source", () => {
+    const rows = profile([["package-lock.json", "yarn.lock", "src/app.js"]], {});
+    const kinds = Object.fromEntries(rows.map((r) => [r.path, r.kind]));
+    expect(kinds["package-lock.json"]).toBe("generated");
+    expect(kinds["yarn.lock"]).toBe("generated");
+    expect(kinds["src/app.js"]).toBe("source");
+  });
 });
 
 describe("concurrency.pr-path-contention", () => {
@@ -66,5 +79,72 @@ describe("concurrency.pr-path-contention", () => {
     expect((await check.run(createFakeRepo({ mergedPrFileLists: lists }))).status).toBe(
       "pass"
     );
+  });
+
+  it("is not auto-fixable when a contended god-file sits alongside a metadata file", async () => {
+    const big = "a\n".repeat(6000);
+    const lists = Array.from({ length: 10 }, (_, i) => [
+      `src/f${i}.js`,
+      "CHANGELOG.md",
+      "src/App.svelte",
+    ]);
+    const f = await check.run(
+      createFakeRepo({ files: { "src/App.svelte": big }, mergedPrFileLists: lists })
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/CHANGELOG\.md/);
+    expect(f.evidence).toMatch(/App\.svelte/);
+    expect(f.fix).toMatch(/changesets|towncrier/i);
+    expect(f.fix).toMatch(/no automatic fix/i);
+    expect(f.autoFixable).toBe(false);
+  });
+
+  it("is not auto-fixable when a contended source file sits alongside a metadata file, even below the size floor", async () => {
+    const lists = Array.from({ length: 10 }, (_, i) => [
+      `src/f${i}.js`,
+      "CHANGELOG.md",
+      "src/small.js",
+    ]);
+    const f = await check.run(
+      createFakeRepo({
+        files: { "src/small.js": "a\n".repeat(10) },
+        mergedPrFileLists: lists,
+      })
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/src\/small\.js/);
+    expect(f.autoFixable).toBe(false);
+  });
+
+  it("gives a lockfile the regeneration fix, not the god-file fix", async () => {
+    const bigLock = "a\n".repeat(6000);
+    const lists = Array.from({ length: 10 }, (_, i) => [
+      `src/f${i}.js`,
+      "package-lock.json",
+    ]);
+    const f = await check.run(
+      createFakeRepo({
+        files: { "package-lock.json": bigLock },
+        mergedPrFileLists: lists,
+      })
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/package-lock\.json/);
+    expect(f.fix).toMatch(/machine-generated|regenerat/i);
+    expect(f.fix).not.toMatch(/no automatic fix/i);
+    expect(f.autoFixable).toBe(false);
+  });
+
+  it("surfaces a large sub-threshold file as 'also worth attention' without failing the status", async () => {
+    const big = "a\n".repeat(2000);
+    const lists = Array.from({ length: 20 }, (_, i) =>
+      i < 3 ? ["src/big.js"] : [`src/f${i}.js`]
+    );
+    const f = await check.run(
+      createFakeRepo({ files: { "src/big.js": big }, mergedPrFileLists: lists })
+    );
+    expect(f.status).toBe("pass");
+    expect(f.evidence).toMatch(/also worth attention/i);
+    expect(f.evidence).toMatch(/src\/big\.js/);
   });
 });
