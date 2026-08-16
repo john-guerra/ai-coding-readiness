@@ -328,6 +328,91 @@ describe("guide.guardrails", () => {
     expect(f.evidence).toMatch(/settings\.json/);
   });
 
+  // Enforcement outranks prose. Before this, the first prohibition-shaped
+  // line anywhere in the corpus won and the deny list was never mentioned.
+  it("cites the enforced deny list rather than prose when both exist", async () => {
+    const f = await guardrails.run(
+      createFakeRepo({
+        files: {
+          "CLAUDE.md": "# Guide\n\nNever modify the user's photo folders.\n",
+          ".claude/settings.json": JSON.stringify({
+            permissions: { deny: ["Bash(rm -rf *)"] },
+          }),
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+    expect(f.evidence).toMatch(/denied permission/);
+    expect(f.evidence).toMatch(/settings\.json/);
+  });
+
+  it("prefers a prohibition under a guardrail-ish heading over an earlier one in prose", async () => {
+    const f = await guardrails.run(
+      createFakeRepo({
+        files: {
+          "CLAUDE.md": [
+            "# Guide",
+            "",
+            "The cache never expires, so restart after a config change.",
+            "",
+            "## Guardrails",
+            "",
+            "- Never write to production data.",
+            "",
+            "## Testing",
+            "",
+            "Run the suite.",
+            "",
+          ].join("\n"),
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+    expect(f.evidence).toMatch(/Never write to production data/);
+    expect(f.evidence).toMatch(/Guardrails/);
+    expect(f.evidence).not.toMatch(/cache never expires/);
+  });
+
+  it("does not read a later section as part of the guardrail section", async () => {
+    const f = await guardrails.run(
+      createFakeRepo({
+        files: {
+          "CLAUDE.md": [
+            "# Guide",
+            "",
+            "## Guardrails",
+            "",
+            "See the team handbook.",
+            "",
+            "## Testing",
+            "",
+            "Never skip the suite.",
+            "",
+          ].join("\n"),
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+    // Falls back to the prose match, and must SAY that is what it did.
+    expect(f.evidence).toMatch(/text match, not a judgment/);
+  });
+
+  // Still `pass` — the check stays deterministic — but it must stop claiming
+  // it found a boundary when all it found was prohibition-shaped prose.
+  it("discloses that a bare prose match is a text match, not a judgment", async () => {
+    const f = await guardrails.run(
+      createFakeRepo({
+        files: {
+          "CLAUDE.md":
+            "The cache never expires, so restart after a config change.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+    expect(f.evidence).toMatch(/text match, not a judgment/);
+    expect(f.evidence).not.toMatch(/Matched a prohibition under/);
+  });
+
   it("does not treat malformed settings as a deny list", async () => {
     const f = await guardrails.run(
       createFakeRepo({
