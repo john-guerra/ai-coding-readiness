@@ -3,7 +3,6 @@ import { createFakeRepo } from "../lib/repo.js";
 import {
   readGuide,
   resolveImports,
-  guideCorpus,
   alwaysLoadedRules,
   countLines,
 } from "../lib/guide.js";
@@ -259,27 +258,6 @@ describe("resolveImports", () => {
       "CLAUDE.md",
       "docs/../AGENTS.md",
     ]);
-  });
-});
-
-describe("guideCorpus", () => {
-  it("returns null when no guide exists", async () => {
-    expect(await guideCorpus(createFakeRepo({ files: {} }))).toBeNull();
-  });
-
-  // The documented delegation pattern: an entry file that imports the real
-  // substance. A check reading only readGuide's single file would miss
-  // content that guideCorpus makes searchable.
-  it("concatenates the guide and its imports into one searchable body", async () => {
-    const repo = createFakeRepo({
-      files: {
-        "CLAUDE.md": "@AGENTS.md\n",
-        "AGENTS.md": "run `npm test`\n",
-      },
-    });
-    const corpus = await guideCorpus(repo);
-    expect(corpus?.paths.sort()).toEqual(["AGENTS.md", "CLAUDE.md"]);
-    expect(corpus?.text).toContain("npm test");
   });
 });
 
