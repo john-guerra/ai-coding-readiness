@@ -3,6 +3,7 @@ import { createFakeRepo } from "../lib/repo.js";
 import {
   readGuide,
   resolveImports,
+  guideCorpus,
   alwaysLoadedRules,
   countLines,
 } from "../lib/guide.js";
@@ -35,7 +36,7 @@ describe("resolveImports", () => {
     const repo = createFakeRepo({ files: { "CLAUDE.md": "a\nb\nc\n" } });
     const guide = await readGuide(repo);
     const { files } = await resolveImports(repo, /** @type {any} */ (guide));
-    expect(files).toEqual([{ path: "CLAUDE.md", lines: 3 }]);
+    expect(files).toEqual([{ path: "CLAUDE.md", lines: 3, text: "a\nb\nc\n" }]);
   });
 
   it("follows @-imports and counts each file once", async () => {
@@ -76,12 +77,12 @@ describe("resolveImports", () => {
       files: { "CLAUDE.md": "@a.md\n", "a.md": "@CLAUDE.md\n" },
     });
     const guide = await readGuide(repo);
-    const { files, cycles } = await resolveImports(
+    const { files, alreadyCounted } = await resolveImports(
       repo,
       /** @type {any} */ (guide),
     );
     expect(files.map((f) => f.path).sort()).toEqual(["CLAUDE.md", "a.md"]);
-    expect(cycles).toContain("CLAUDE.md");
+    expect(alreadyCounted).toContain("CLAUDE.md");
   });
 
   it("skips an import that does not resolve to a file", async () => {
@@ -123,6 +124,89 @@ describe("resolveImports", () => {
     const { files } = await resolveImports(repo, /** @type {any} */ (guide));
     expect(files.map((f) => f.path)).toContain("media");
   });
+
+  // A missed import silently under-counts whatever budget is built on top of
+  // resolveImports — the false-`pass` direction, and the more dangerous one.
+  // These four cases are the ones an independent plan review found the
+  // original whitespace-only-boundary regex dropped.
+  it("trims a trailing period from an import path", async () => {
+    const repo = createFakeRepo({
+      files: { "CLAUDE.md": "See @docs/a.md.\n", "docs/a.md": "x\n" },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
+  });
+
+  it("trims a trailing comma from an import path", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "CLAUDE.md": "See @docs/a.md, then read on.\n",
+        "docs/a.md": "x\n",
+      },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
+  });
+
+  it("trims a trailing semicolon from an import path", async () => {
+    const repo = createFakeRepo({
+      files: { "CLAUDE.md": "@docs/a.md;\n", "docs/a.md": "x\n" },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
+  });
+
+  it("resolves an import wrapped in markdown emphasis", async () => {
+    const repo = createFakeRepo({
+      files: { "CLAUDE.md": "**@docs/a.md**\n", "docs/a.md": "x\n" },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
+  });
+
+  // ~-rooted and /-rooted paths cannot be resolved against the repo root, so
+  // treating them as imports would either read the wrong file or silently
+  // fail — neither is what "skip" should mean.
+  it("skips a ~-rooted import path", async () => {
+    const repo = createFakeRepo({
+      files: { "CLAUDE.md": "@~/.claude/x.md\n" },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
+  });
+
+  it("skips a /-rooted (absolute) import path", async () => {
+    const repo = createFakeRepo({ files: { "CLAUDE.md": "@/etc/passwd\n" } });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
+  });
+});
+
+describe("guideCorpus", () => {
+  it("returns null when no guide exists", async () => {
+    expect(await guideCorpus(createFakeRepo({ files: {} }))).toBeNull();
+  });
+
+  // The documented delegation pattern: an entry file that imports the real
+  // substance. A check reading only readGuide's single file would miss
+  // content that guideCorpus makes searchable.
+  it("concatenates the guide and its imports into one searchable body", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "CLAUDE.md": "@AGENTS.md\n",
+        "AGENTS.md": "run `npm test`\n",
+      },
+    });
+    const corpus = await guideCorpus(repo);
+    expect(corpus?.paths.sort()).toEqual(["AGENTS.md", "CLAUDE.md"]);
+    expect(corpus?.text).toContain("npm test");
+  });
 });
 
 describe("alwaysLoadedRules", () => {
@@ -148,6 +232,58 @@ describe("alwaysLoadedRules", () => {
 
   it("returns nothing when there is no rules directory", async () => {
     expect(await alwaysLoadedRules(createFakeRepo({ files: {} }))).toEqual([]);
+  });
+
+  // An empty `paths:` scope restricts the rule to nothing, which means the
+  // rule IS always loaded. Excluding it would under-count the always-loaded
+  // budget — the false-`pass` direction.
+  it("treats paths: with no value as always-loaded", async () => {
+    const repo = createFakeRepo({
+      files: { ".claude/rules/x.md": "---\npaths:\n---\nrule\n" },
+    });
+    expect(await alwaysLoadedRules(repo)).toEqual([
+      { path: ".claude/rules/x.md", lines: 4 },
+    ]);
+  });
+
+  it("treats paths: [] as always-loaded", async () => {
+    const repo = createFakeRepo({
+      files: { ".claude/rules/x.md": "---\npaths: []\n---\nrule\n" },
+    });
+    expect(await alwaysLoadedRules(repo)).toEqual([
+      { path: ".claude/rules/x.md", lines: 4 },
+    ]);
+  });
+
+  // CRLF, a BOM, and a leading blank line all hide the opening `---` from a
+  // `^---\n` anchor, which would wrongly count a scoped rule as always-loaded.
+  it("recognizes a paths scope through CRLF line endings", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".claude/rules/api.md":
+          '---\r\npaths:\r\n  - "src/**/*.ts"\r\n---\r\nrule\r\n',
+      },
+    });
+    expect(await alwaysLoadedRules(repo)).toEqual([]);
+  });
+
+  it("recognizes a paths scope past a leading BOM", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".claude/rules/api.md":
+          '\uFEFF---\npaths:\n  - "src/**/*.ts"\n---\nrule\n',
+      },
+    });
+    expect(await alwaysLoadedRules(repo)).toEqual([]);
+  });
+
+  it("recognizes a paths scope past a leading blank line", async () => {
+    const repo = createFakeRepo({
+      files: {
+        ".claude/rules/api.md": '\n---\npaths:\n  - "src/**/*.ts"\n---\nrule\n',
+      },
+    });
+    expect(await alwaysLoadedRules(repo)).toEqual([]);
   });
 });
 
