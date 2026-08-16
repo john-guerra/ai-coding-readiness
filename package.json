@@ -8,11 +8,14 @@
     "node": ">=20"
   },
   "bin": {
-    "ai-coding-readiness": "./bin/audit.mjs"
+    "ai-coding-readiness": "./bin/audit.mjs",
+    "ai-ready": "./bin/audit.mjs"
   },
   "files": [
     "bin",
-    "lib"
+    "lib",
+    ".claude-plugin",
+    "skills"
   ],
   "scripts": {
     "test": "vitest run",
