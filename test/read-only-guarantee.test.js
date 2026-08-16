@@ -136,10 +136,19 @@ describe("ACTION_KINDS does not drift from lib/actions.js", () => {
   const source = readFileSync(join(ROOT, "lib", "actions.js"), "utf8");
 
   it("lists exactly the kinds the Action union declares", () => {
-    const declared = new Set(
-      [...source.matchAll(/\{kind:\s*"([a-z-]+)"/g)].map((m) => m[1]),
-    );
-    expect(declared.size).toBeGreaterThan(0);
+    // `\s*` after the brace, because Prettier formats an object TYPE as
+    // `{ kind: "copy-file", … }` with the space — and the space-less form of
+    // this pattern simply does not see such a member. The test then passes
+    // green while `ACTION_KINDS` and `lib/actions.js` have diverged, which is
+    // the exact silent downgrade the comment above describes: `makeFinding`
+    // throws on the new kind, `runChecks` catches, and a real `fail` renders
+    // as `unknown`.
+    const matches = [...source.matchAll(/\{\s*kind:\s*"([a-z-]+)"/g)];
+    // Three members, counted rather than assumed. Without this a pattern that
+    // matched NOTHING, or matched two of three, would agree with an empty or
+    // half-empty `declared` by coincidence rather than by observation.
+    expect(matches).toHaveLength(3);
+    const declared = new Set(matches.map((m) => m[1]));
     expect([...declared].sort()).toEqual([...ACTION_KINDS].sort());
   });
 
