@@ -15,6 +15,12 @@ Then `/ai-ready:audit`, or run the CLI directly from a clone:
 node bin/audit.mjs --path <repo>
 ```
 
+> **What v0.1 actually ships: the _diagnose_ half — ten deterministic,
+> read-only checks.** The adapt half (the interview, the marked regions, the
+> one-PR delivery) and the unenforced-invariant report described below are
+> designed but **not built yet**. Everything under "The idea" and "What it
+> looks at" is where this is going, not what it does today.
+
 A Claude Code plugin that **diagnoses** how ready a GitHub repository is for
 AI-assisted collaboration, and then **adapts** it — writing the harness that
 lets multiple AI agents and multiple humans work on the same repo
@@ -36,7 +42,8 @@ you what's wrong and leave. This runs on a **brownfield** repo — one that
 already exists, with history and conventions worth preserving — measures it,
 interviews you about what it can't measure, and opens **one reviewable PR**.
 
-The headline finding it produces looks like this:
+The headline finding it is being built to produce looks like this (**not built
+yet** — see the banner above):
 
 > Your `CLAUDE.md` states 11 rules. Nothing enforces 9 of them.
 > Here are tests for 4, a lint rule for 2, and a CI grep for 1 — in one PR.
@@ -47,13 +54,16 @@ feature — because prose in a markdown file is persuasion, not enforcement.
 
 ## What it looks at
 
+Items marked _(planned)_ are part of the design, not of the ten checks v0.1
+registers.
+
 - **Contention** — which files appear in nearly every PR diff? Those are the
   points where two agents collide, and they're usually fixable by _removing_
   the shared file rather than locking it.
 - **Feedback loop health** — is the merge gate fast, and can it fail without a
   code change? A gate that goes red with no diff blocks every agent at once.
-- **Unenforced invariants** — which stated MUST/NEVER rules have no test, lint
-  rule, or CI check behind them.
+- **Unenforced invariants** _(planned)_ — which stated MUST/NEVER rules have no
+  test, lint rule, or CI check behind them.
 - **The harness basics** — agent guide, guardrails, lockfile, CI completeness,
   static analysis, issue/PR templates, CODEOWNERS.
 
@@ -65,8 +75,9 @@ owns changelog concurrency. What's left — and what nothing else measures — i
 
 ## Scope, honestly
 
-v0.1 targets **single-package Node repositories hosted on GitHub**. Monorepos
-are detected and refused rather than given confident garbage. Other ecosystems
+v0.1 targets **single-package Node repositories hosted on GitHub**. Monorepo
+detection-and-refusal is designed but _not built yet_ — point v0.1 at a
+monorepo today and it will answer as if it were one package. Other ecosystems
 and forges come later, or not at all if they don't earn it.
 
 It deliberately does **not** rebuild things that already exist. Security and

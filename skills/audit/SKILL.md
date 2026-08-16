@@ -13,15 +13,25 @@ writes to the repository under audit.
 ## Run it
 
 ```bash
-npx ai-coding-readiness --path <repo>          # markdown report
-npx ai-coding-readiness --path <repo> --json   # machine-readable
+node "${CLAUDE_PLUGIN_ROOT}/bin/audit.mjs" --path <repo>          # markdown report
+node "${CLAUDE_PLUGIN_ROOT}/bin/audit.mjs" --path <repo> --json   # machine-readable
 ```
 
-`npx ai-ready` does **not** resolve to this tool — `npx` resolves by package
-name, and `ai-ready` is only a `bin` alias available after this package is
-installed. Use the package name above.
+The audit ships inside this plugin, so it runs straight from the plugin root.
+It does not shell out to npm, and it must not: this tool's own guardrail is
+"one network path, and only one", and reaching the registry to run an audit
+would be a second.
 
-From a clone of this plugin, `node bin/audit.mjs --path <repo>` is equivalent.
+From a clone rather than an install, `node bin/audit.mjs --path <repo>` is the
+same command.
+
+⚠️ **`npx ai-ready` is an unrelated third-party package — do not run it.**
+`ai-ready` on npm is "Automatic Claude Code plugin discovery for npm
+dependencies" by another author; `ai-ready` is only this plugin's name and a
+`bin` alias inside this package. `npx ai-coding-readiness` does not work
+either: that name is not published (404). Once it is published, `npx
+ai-coding-readiness --path <repo>` will be the alternative for people who have
+not installed the plugin — but it is not available today.
 
 Exit codes: `0` no failures · `1` at least one failure · `2` usage error.
 
@@ -37,9 +47,11 @@ Three statuses, and the third is the one that matters:
 
 ## What to do with it
 
-1. Report the failures with their evidence, in the order the tool emits them —
-   cheapest checks resolve first, so the top of the report is the fastest thing
-   to act on.
+1. Report the failures with their evidence, in report order: the markdown
+   report is sorted `fail` → `unknown` → `pass`, then by check id, so the
+   failures are already at the top. Two other orders exist and neither is the
+   report — the progress lines on stderr stream as checks resolve (cheapest
+   first), and `--json` emits findings in registry order.
 2. **Quote a finding's `precondition` before proposing its fix.** Several
    remediations are unsafe to apply blindly: raising a test-runner's worker
    count on a suite with shared state buys flake rather than speed, and
