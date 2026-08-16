@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { execFile } from "node:child_process";
 import {
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -511,18 +512,62 @@ describe("bin/adapt.mjs — a failing action", () => {
       async (dir) => {
         const r = await adapt(["--path", dir, "--write"]);
         expect(r.code).toBe(1);
-        expect(r.stdout + r.stderr).toMatch(/symlink/i);
+        expect(r.stdout + r.stderr).toMatch(/director/i);
         expect(r.stdout).toMatch(/1 failed/);
         // The other actions still landed — one refusal does not cost the run.
-        expect(
-          await readMaybe(dir, ".github/ISSUE_TEMPLATE/bug.md"),
-        ).not.toBeNull();
         const ignore = await readFile(join(dir, ".gitignore"), "utf8");
         expect(ignore).toMatch(/dist\//);
+        expect(await readFile(join(dir, "AGENTS.md"), "utf8")).toMatch(
+          /ai-readiness:begin id=guardrails/,
+        );
       },
       {
-        // The guide is a symlink. The writer refuses to write through one,
-        // because following it would write somewhere it was not pointed at.
+        // A DIRECTORY where the issue template goes. The check does not count
+        // it (`listFiles` only reports files), so the action is emitted; the
+        // writer then refuses to replace a directory with a file.
+        async seed(dir) {
+          await seedFixableRepo(dir);
+          await mkdir(join(dir, ".github", "ISSUE_TEMPLATE", "bug.md"), {
+            recursive: true,
+          });
+          await writeFile(
+            join(dir, ".github", "ISSUE_TEMPLATE", "bug.md", "keep.txt"),
+            "not a template\n",
+            "utf8",
+          );
+        },
+      },
+    );
+  });
+
+  // The other side of the same guard, and the reason it had to change: a guide
+  // that is a symlink to another file INSIDE the repository is a repository
+  // doing nothing wrong (`CLAUDE.md -> AGENTS.md` is a common layout). Refusing
+  // it made `guide.guardrails` unfixable forever, with a message that was
+  // factually wrong about where the write would land.
+  it("writes through a symlink that resolves inside the repository", async () => {
+    await withRepo(
+      async (dir) => {
+        const r = await adapt(["--path", dir, "--write"]);
+        expect(r.code).toBe(0);
+        expect(r.stdout).toMatch(/0 failed/);
+
+        // The region landed in the RESOLVED file...
+        expect(await readFile(join(dir, "guide-real.md"), "utf8")).toMatch(
+          /ai-readiness:begin id=guardrails/,
+        );
+        // ...and the symlink is still a symlink.
+        expect((await lstat(join(dir, "AGENTS.md"))).isSymbolicLink()).toBe(
+          true,
+        );
+
+        // And it stays idempotent through the indirection.
+        await commitAll(dir, "adapt");
+        const again = await adapt(["--path", dir, "--write"]);
+        expect(again.code).toBe(0);
+        expect(await porcelain(dir)).toBe("");
+      },
+      {
         async seed(dir) {
           await seedFixableRepo(dir);
           await writeFile(
