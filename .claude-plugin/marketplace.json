@@ -5,7 +5,7 @@
     {
       "name": "ai-ready",
       "source": "./",
-      "description": "Audit a repository's readiness for concurrent AI-assisted contribution"
+      "description": "Audit a repository's readiness for concurrent AI-assisted contribution, then apply the fixes it found"
     }
   ]
 }

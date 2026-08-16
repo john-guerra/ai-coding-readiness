@@ -1,6 +1,6 @@
 {
   "name": "ai-coding-readiness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Diagnose and adapt a GitHub repo for AI-assisted collaboration under concurrent contributors",
   "license": "MIT",
   "type": "module",
@@ -9,7 +9,8 @@
   },
   "bin": {
     "ai-coding-readiness": "./bin/audit.mjs",
-    "ai-ready": "./bin/audit.mjs"
+    "ai-ready": "./bin/audit.mjs",
+    "ai-ready-adapt": "./bin/adapt.mjs"
   },
   "files": [
     "bin",
@@ -18,7 +19,9 @@
     "skills"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run && node scripts/check-idempotent.mjs",
+    "test:unit": "vitest run",
+    "test:idempotent": "node scripts/check-idempotent.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json",
     "format": "prettier --write .",

@@ -1,7 +1,7 @@
 {
   "name": "ai-ready",
-  "description": "Diagnose how ready a repository is for AI-assisted collaboration under concurrent contributors, and adapt it",
-  "version": "0.1.0",
+  "description": "Audit a repository's readiness for concurrent AI-assisted contribution, then apply the fixes it found — dry-run by default, never commits, never overwrites what it did not write",
+  "version": "0.2.0",
   "author": { "name": "John Alexis Guerra Gómez" },
   "homepage": "https://github.com/john-guerra/ai-coding-readiness",
   "repository": "https://github.com/john-guerra/ai-coding-readiness",

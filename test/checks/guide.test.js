@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createFakeRepo } from "../../lib/repo.js";
+import { applyFinding } from "../helpers/apply-finding.js";
 import exists from "../../lib/checks/guide-exists.js";
 import commands from "../../lib/checks/guide-commands.js";
 import guardrails from "../../lib/checks/guide-guardrails.js";
@@ -439,5 +440,91 @@ describe("guide.guardrails", () => {
       }),
     );
     expect(f.status).toBe("fail");
+  });
+
+  describe("action", () => {
+    const BARE = { "CLAUDE.md": "# Guide\n\nRun npm test.\n" };
+
+    it("offers a guardrails region in the guide", async () => {
+      const f = await guardrails.run(createFakeRepo({ files: BARE }));
+      expect(f.autoFixable).toBe(true);
+      expect(f.action).toMatchObject({
+        kind: "write-region",
+        path: "CLAUDE.md",
+        id: "guardrails",
+        version: 1,
+      });
+    });
+
+    // The region goes in whichever guide this repository actually has, not in
+    // a CLAUDE.md invented beside it — writing a second guide would be a new
+    // finding for `guide.exists`, not a fix for this one.
+    it("targets the guide that exists, not a fixed filename", async () => {
+      const f = await guardrails.run(
+        createFakeRepo({
+          files: { "AGENTS.md": "# Guide\n\nRun the suite.\n" },
+        }),
+      );
+      expect(f.action).toMatchObject({ path: "AGENTS.md" });
+    });
+
+    // `guide.exists` owns the no-guide case. There is nothing to write into,
+    // and creating one here would report this finding fixed while the guide
+    // that check asks for still does not exist.
+    it("offers nothing when there is no guide to write into", async () => {
+      const f = await guardrails.run(createFakeRepo({ files: {} }));
+      expect(f.status).toBe("unknown");
+      expect(f.autoFixable).toBe(false);
+      expect(f.action).toBeNull();
+    });
+
+    it("carries no action when it passes", async () => {
+      const f = await guardrails.run(
+        createFakeRepo({
+          files: { "CLAUDE.md": "Never modify the user's photo folders.\n" },
+        }),
+      );
+      expect(f.status).toBe("pass");
+      expect(f.autoFixable).toBe(false);
+      expect(f.action).toBeNull();
+    });
+
+    it("names the boundaries that actually matter, and admits it is a start", async () => {
+      const f = await guardrails.run(createFakeRepo({ files: BARE }));
+      const inner = /** @type {{inner: string}} */ (f.action).inner;
+      expect(inner).toMatch(/production/i);
+      expect(inner).toMatch(/user'?s files|user files/i);
+      expect(inner).toMatch(/credential|secret/i);
+      expect(inner).toMatch(/soft.delete/i);
+      expect(inner).toMatch(/undo/i);
+      expect(inner).toMatch(/starting point/i);
+    });
+
+    // Amendment B8, and the reason B8 exists. This check passes only when its
+    // PROHIBITION regex matches under a guardrail-ish heading; nothing else
+    // forces the generated region to contain such a token. Without this
+    // assertion the tool would write into someone's guide, report "applied 1
+    // change", and leave the finding red.
+    it("passes on the next run once its own action is applied", async () => {
+      const f = await guardrails.run(createFakeRepo({ files: BARE }));
+      expect(f.status).toBe("fail");
+
+      const { result, files } = await applyFinding(BARE, f);
+      expect(result.changed).toBe(true);
+
+      const after = await guardrails.run(createFakeRepo({ files }));
+      expect(after.status).toBe("pass");
+      // And it passes on the STRONG signal — a prohibition filed under an
+      // explicit heading — not the weak prose fallback that says out loud it
+      // is only a text match.
+      expect(after.evidence).toMatch(/Matched a prohibition under/);
+      expect(after.evidence).not.toMatch(/text match, not a judgment/);
+    });
+
+    it("leaves the prose it found the guide with untouched", async () => {
+      const f = await guardrails.run(createFakeRepo({ files: BARE }));
+      const { files } = await applyFinding(BARE, f);
+      expect(files["CLAUDE.md"].startsWith(BARE["CLAUDE.md"])).toBe(true);
+    });
   });
 });

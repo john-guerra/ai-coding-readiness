@@ -25,6 +25,7 @@ const finding = (id, status = "pass") =>
     precondition: null,
     fix: status === "fail" ? "f" : null,
     autoFixable: false,
+    action: null,
   });
 
 /**

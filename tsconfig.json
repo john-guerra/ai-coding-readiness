@@ -10,7 +10,12 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["lib/**/*.js", "bin/**/*.mjs", "test/**/*.js"],
+  "include": [
+    "lib/**/*.js",
+    "bin/**/*.mjs",
+    "scripts/**/*.mjs",
+    "test/**/*.js"
+  ],
   // test/finding.test.js is excluded, not the whole test/ tree: its standalone
   // `const base` object literal widens `tier` to `number` under ordinary TS
   // inference (unrelated to `strict`), which conflicts with Finding's `tier:

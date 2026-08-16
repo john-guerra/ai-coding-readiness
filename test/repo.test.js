@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, rm, writeFile, mkdir, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { createFakeRepo, createFsRepo } from "../lib/repo.js";
@@ -276,6 +276,63 @@ describe("createFsRepo containment", () => {
     try {
       expect(await repo.listFiles("..")).toEqual([]);
       expect(await repo.listFiles(parent)).toEqual([]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  // The `@../secret.md` traversal was closed; the SYMLINK route was not.
+  // `insideRoot` is lexical, and `readFile` follows links — so a
+  // `CLAUDE.md -> /outside/secret.md` symlink made the audit quote verbatim
+  // content of a file outside the target directory into a report that
+  // `.github/ISSUE_TEMPLATE/bug.md` asks people to paste in public. Same fix
+  // the writer uses: realpath, then re-assert containment.
+  it("refuses a symlink pointing outside the root, returning null as if absent", async () => {
+    const { parent, root, repo } = await makeTree();
+    try {
+      await symlink(join(parent, "secret.md"), join(root, "CLAUDE.md"));
+      expect(await repo.readFile("CLAUDE.md")).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  // ...and the same for a directory hop, where the escaping component is not
+  // the file being read.
+  it("refuses a read through a symlinked directory pointing outside", async () => {
+    const { parent, root, repo } = await makeTree();
+    try {
+      await mkdir(join(parent, "elsewhere"), { recursive: true });
+      await writeFile(join(parent, "elsewhere", "x.md"), "outside\n", "utf8");
+      await symlink(join(parent, "elsewhere"), join(root, "link"));
+      expect(await repo.readFile("link/x.md")).toBeNull();
+      expect(await repo.listFiles("link")).toEqual([]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  // The refusal is about WHERE the path lands, not about symlinks. A link that
+  // resolves back inside the root is a repository doing nothing wrong, and it
+  // must still be readable — otherwise the read half and the write half
+  // disagree about the same `CLAUDE.md -> AGENTS.md` layout.
+  it("reads through a symlink that resolves inside the root", async () => {
+    const { parent, root, repo } = await makeTree();
+    try {
+      await symlink("inside.md", join(root, "CLAUDE.md"));
+      expect(await repo.readFile("CLAUDE.md")).toBe("inside\n");
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  // A dangling symlink is absent, not an error: every check treats null as
+  // "not there", and there is nothing to disclose.
+  it("treats a dangling symlink as absent", async () => {
+    const { parent, root, repo } = await makeTree();
+    try {
+      await symlink(join(parent, "gone.md"), join(root, "CLAUDE.md"));
+      expect(await repo.readFile("CLAUDE.md")).toBeNull();
     } finally {
       await rm(parent, { recursive: true, force: true });
     }

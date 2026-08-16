@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createFakeRepo } from "../../lib/repo.js";
+import { applyFinding } from "../helpers/apply-finding.js";
 import check from "../../lib/checks/repo-hygiene.js";
 
 const IGNORE_ALL = "node_modules/\ndist/\n.env\n.DS_Store\n";
@@ -222,5 +223,114 @@ describe("repo.hygiene", () => {
       /does not look for tracked secrets or credentials/i,
     );
     expect(f.evidence).toMatch(/listing of tracked files/i);
+  });
+
+  describe("action", () => {
+    it("carries no action when it passes", async () => {
+      const f = await check.run(
+        createFakeRepo({
+          files: {
+            "package.json": "{}",
+            "package-lock.json": "x",
+            ".gitignore": IGNORE_ALL,
+          },
+        }),
+      );
+      expect(f.autoFixable).toBe(false);
+      expect(f.action).toBeNull();
+    });
+
+    it("appends only the genuinely-missing entries", async () => {
+      const f = await check.run(
+        createFakeRepo({
+          files: {
+            "package.json": "{}",
+            "package-lock.json": "x",
+            ".gitignore": "node_modules/\n",
+          },
+        }),
+      );
+      expect(f.autoFixable).toBe(true);
+      expect(f.action).toMatchObject({
+        kind: "append-lines",
+        path: ".gitignore",
+        lines: ["dist/", ".env", ".DS_Store"],
+      });
+    });
+
+    it("writes all four entries when there is no .gitignore at all", async () => {
+      const f = await check.run(
+        createFakeRepo({
+          files: { "package.json": "{}", "package-lock.json": "x" },
+        }),
+      );
+      expect(f.action).toMatchObject({
+        kind: "append-lines",
+        path: ".gitignore",
+        lines: ["node_modules/", "dist/", ".env", ".DS_Store"],
+      });
+    });
+
+    // The .gitignore half is machine-applicable; the lockfile half is `npm
+    // install`, which is not one of the three things this tool may do to a
+    // file. A finding carries ONE action, and offering the partial one would
+    // report a fix applied while the gap that needs a person went unmentioned
+    // in the run's summary.
+    it("offers nothing while a lockfile is also missing", async () => {
+      const f = await check.run(
+        createFakeRepo({
+          files: { "package.json": "{}", ".gitignore": "node_modules/\n" },
+        }),
+      );
+      expect(f.status).toBe("fail");
+      expect(f.autoFixable).toBe(false);
+      expect(f.action).toBeNull();
+      expect(f.fix).toMatch(/--package-lock-only/);
+    });
+
+    // Amendment B10: the manifest is what tells our own regions apart from a
+    // human's edit, and it only survives if it is committed. An action that
+    // ignored `.ai-readiness/` would disarm the very safety mechanism the
+    // write path depends on.
+    it("never proposes ignoring the manifest directory", async () => {
+      const f = await check.run(
+        createFakeRepo({
+          files: { "package.json": "{}", "package-lock.json": "x" },
+        }),
+      );
+      const lines = /** @type {{lines: string[]}} */ (f.action).lines;
+      expect(lines.some((l) => /ai-readiness/.test(l))).toBe(false);
+    });
+
+    // Amendment B8: applying the action must make the check that produced it
+    // pass. Note this crosses the two notions of "already present" — the
+    // action's exact trimmed match and this check's glob-aware `covers()` —
+    // so it is also the assertion that keeps them agreeing.
+    it("passes on the next run once its own action is applied", async () => {
+      const before = {
+        "package.json": "{}",
+        "package-lock.json": "x",
+        ".gitignore": "**/node_modules\n",
+      };
+      const f = await check.run(createFakeRepo({ files: before }));
+      expect(f.status).toBe("fail");
+
+      const { result, files } = await applyFinding(before, f);
+      expect(result.changed).toBe(true);
+
+      const after = await check.run(createFakeRepo({ files }));
+      expect(after.status).toBe("pass");
+      // And it did not restate an entry the glob already covered.
+      expect(files[".gitignore"]).toBe(
+        "**/node_modules\ndist/\n.env\n.DS_Store\n",
+      );
+    });
+
+    it("passes on the next run when it had to create the .gitignore", async () => {
+      const before = { "package.json": "{}", "package-lock.json": "x" };
+      const f = await check.run(createFakeRepo({ files: before }));
+      const { files } = await applyFinding(before, f);
+      expect((await check.run(createFakeRepo({ files }))).status).toBe("pass");
+    });
   });
 });

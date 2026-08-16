@@ -9,17 +9,70 @@ As a Claude Code plugin:
 /plugin install ai-ready@john-guerra
 ```
 
-Then `/ai-ready:audit`, or run the CLI directly from a clone:
+Then `/ai-ready:audit` or `/ai-ready:adapt`, or run the CLIs directly from a
+clone:
 
 ```bash
-node bin/audit.mjs --path <repo>
+node bin/audit.mjs --path <repo>            # read-only, always
+node bin/adapt.mjs --path <repo>            # dry run: what it would change
+node bin/adapt.mjs --path <repo> --write    # apply it
 ```
 
-> **What v0.1 actually ships: the _diagnose_ half — ten deterministic,
-> read-only checks.** The adapt half (the interview, the marked regions, the
-> one-PR delivery) and the unenforced-invariant report described below are
-> designed but **not built yet**. Everything under "The idea" and "What it
-> looks at" is where this is going, not what it does today.
+> **What v0.2 actually ships: the _diagnose_ half — ten deterministic,
+> read-only checks — and a narrow first slice of the _adapt_ half.** `adapt`
+> applies three fixes: the missing `.gitignore` entries, a generated
+> `## Guardrails` section inside a marked region of the agent guide, and the
+> issue and pull-request templates. **It does not do the rest of the adapt
+> design**: no interview, no `.ai-readiness.json` config, no rewriting of CI
+> workflows, `package.json` or Playwright config, no `CODEOWNERS`, no commit,
+> and no pull request. The unenforced-invariant report below is still designed
+> and not built. Everything under "The idea" is where this is going, not what
+> it does today.
+
+### What `adapt` will and will not touch
+
+- **Dry run is the default.** Without `--write` it prints what it would do —
+  every action, in order, with the precondition attached to each and the body
+  it would write — and changes nothing. It runs the same convergence loop
+  `--write` runs, against an in-memory copy, so what you read is the whole plan
+  and not the first pass of it.
+- **It never replaces a file it did not create**, and never rewrites a marked
+  region whose content no longer matches what it recorded writing. A region it
+  has no record of writing is also left alone: no record means the hash is
+  unknown, and unknown is not "unchanged".
+- **It never commits and never opens a pull request.** The changes land in your
+  working tree and the diff is yours to read.
+- **`--write` refuses a dirty working tree** (`--allow-dirty` overrides, and
+  says what it is writing on top of) and refuses to run outside a git
+  repository at all — with no version control there is no diff, no review and
+  no undo, so `--allow-dirty` does not override that one.
+- **Running it twice is a no-op.** That is enforced by a release gate,
+  `npm run test:idempotent`, which seeds a repo (with CRLF line endings, where
+  a naive region matcher appends a fresh region every run), writes, commits,
+  writes again, and fails if anything moved. It is part of `npm test`.
+
+### Two things v0.2 changed for anyone parsing `--json`
+
+- **`bin/audit.mjs --json` now emits an `action` field on every finding**, and
+  for the three that carry one it includes the full generated body inline — a
+  30-line issue template, a pull-request template, a `## Guardrails` section.
+  Findings are otherwise unchanged and no field was removed, but a consumer
+  that diffs whole finding objects, or that assumed the payload stayed small,
+  will notice. The audit is still read-only; only the shape of what it reports
+  grew.
+- **`bin/adapt.mjs --json`**: in a dry run, `planned` is now the convergence
+  loop's own log — one entry per action with `pass`, `outcome`, `detail` and
+  `content`, including actions that only a later pass reaches. Under `--write`
+  it keeps its previous meaning (what is still outstanding afterwards) and
+  `applied` omits `content`, since those bytes are already in `git diff`.
+
+### Commit `.ai-readiness/manifest.json`
+
+`adapt` records a hash of every region it writes in `.ai-readiness/manifest.json`.
+That file is how a later run tells its own output from your edits — so it has
+to be committed, and it must never be added to `.gitignore`. Without it, the
+next run refuses to touch the regions it wrote rather than risk overwriting
+something you changed.
 
 A Claude Code plugin that **diagnoses** how ready a GitHub repository is for
 AI-assisted collaboration, and then **adapts** it — writing the harness that
@@ -54,7 +107,7 @@ feature — because prose in a markdown file is persuasion, not enforcement.
 
 ## What it looks at
 
-Items marked _(planned)_ are part of the design, not of the ten checks v0.1
+Items marked _(planned)_ are part of the design, not of the ten checks v0.2
 registers.
 
 - **Contention** — which files appear in nearly every PR diff? Those are the
@@ -75,10 +128,17 @@ owns changelog concurrency. What's left — and what nothing else measures — i
 
 ## Scope, honestly
 
-v0.1 targets **single-package Node repositories hosted on GitHub**. Monorepo
-detection-and-refusal is designed but _not built yet_ — point v0.1 at a
+v0.2 targets **single-package Node repositories hosted on GitHub**. Monorepo
+detection-and-refusal is designed but _not built yet_ — point v0.2 at a
 monorepo today and it will answer as if it were one package. Other ecosystems
 and forges come later, or not at all if they don't earn it.
+
+Of the ten checks, **three carry an automatic fix**. The other seven stay
+`autoFixable: false` on purpose: their remediations mean rewriting CI YAML,
+`package.json` or Playwright config — editing files somebody else wrote, in
+formats where a confidently wrong edit is worse than no edit — and that needs a
+review this milestone did not give it. The report says so on each of them
+rather than implying `adapt` will handle it.
 
 It deliberately does **not** rebuild things that already exist. Security and
 supply-chain hygiene defer to [OpenSSF
