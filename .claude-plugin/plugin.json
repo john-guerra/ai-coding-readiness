@@ -1,0 +1,10 @@
+{
+  "name": "ai-ready",
+  "description": "Diagnose how ready a repository is for AI-assisted collaboration under concurrent contributors, and adapt it",
+  "version": "0.1.0",
+  "author": { "name": "John Alexis Guerra Gómez" },
+  "homepage": "https://github.com/john-guerra/ai-coding-readiness",
+  "repository": "https://github.com/john-guerra/ai-coding-readiness",
+  "license": "MIT",
+  "keywords": ["audit", "ci", "concurrency", "code-quality", "agents"]
+}

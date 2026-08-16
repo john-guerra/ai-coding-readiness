@@ -9,8 +9,20 @@ import noDiffCanFail from "../lib/checks/ci-no-diff-can-fail-on-gate.js";
 import e2eSharded from "../lib/checks/ci-e2e-sharded.js";
 import flakeObservability from "../lib/checks/ci-flake-observability.js";
 import prPathContention from "../lib/checks/concurrency-pr-path-contention.js";
+import guideExists from "../lib/checks/guide-exists.js";
+import guideCommands from "../lib/checks/guide-commands.js";
+import guideGuardrails from "../lib/checks/guide-guardrails.js";
+import guideContextBudget from "../lib/checks/guide-context-budget.js";
+import repoHygiene from "../lib/checks/repo-hygiene.js";
+import contributionScaffold from "../lib/checks/github-contribution-scaffold.js";
 
 const CHECKS = [
+  guideExists,
+  guideCommands,
+  guideGuardrails,
+  guideContextBudget,
+  repoHygiene,
+  contributionScaffold,
   noDiffCanFail,
   e2eSharded,
   flakeObservability,

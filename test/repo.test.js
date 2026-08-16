@@ -208,3 +208,76 @@ describe("contract tests (both implementations)", () => {
   buildContractTests("fake repo", makeFakeRepo);
   buildContractTests("fs repo", makeFsRepo);
 });
+
+// `readFile` was a bare `join(root, path)`, so repo-controlled content — an
+// `@../secret.md` import in a CLAUDE.md — made the audit read a file outside
+// the directory it was pointed at and print a line of it into a report the
+// issue template tells people to paste. A refused path behaves as absent.
+describe("createFsRepo containment", () => {
+  /** @returns {Promise<{parent: string, root: string, repo: any}>} */
+  const makeTree = async () => {
+    const parent = await mkdtemp(join(tmpdir(), "repo-contain-"));
+    const root = join(parent, "root");
+    await mkdir(root, { recursive: true });
+    await writeFile(join(root, "inside.md"), "inside\n", "utf8");
+    await writeFile(join(parent, "secret.md"), "AWS_SECRET=xyz\n", "utf8");
+    // A sibling whose name has the root's name as a string prefix. A naive
+    // `startsWith(root)` test treats /a/root-evil as living inside /a/root.
+    await mkdir(join(parent, "root-evil"), { recursive: true });
+    await writeFile(join(parent, "root-evil", "x.md"), "outside\n", "utf8");
+    const repo = createFsRepo(root, {
+      exec: async (cmd) => {
+        throw new Error(`refusing to run ${cmd} in a hermetic test`);
+      },
+    });
+    return { parent, root, repo };
+  };
+
+  it("reads a file inside the root", async () => {
+    const { parent, repo } = await makeTree();
+    try {
+      expect(await repo.readFile("inside.md")).toBe("inside\n");
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a ../-escaping readFile, returning null as if absent", async () => {
+    const { parent, repo } = await makeTree();
+    try {
+      expect(await repo.readFile("../secret.md")).toBeNull();
+      expect(await repo.readFile("a/b/../../../secret.md")).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an absolute readFile outside the root", async () => {
+    const { parent, repo } = await makeTree();
+    try {
+      expect(await repo.readFile(join(parent, "secret.md"))).toBeNull();
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("does not treat a sibling sharing the root's name prefix as inside", async () => {
+    const { parent, repo } = await makeTree();
+    try {
+      expect(await repo.readFile("../root-evil/x.md")).toBeNull();
+      expect(await repo.listFiles("../root-evil")).toEqual([]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an escaping listFiles, returning [] as if absent", async () => {
+    const { parent, repo } = await makeTree();
+    try {
+      expect(await repo.listFiles("..")).toEqual([]);
+      expect(await repo.listFiles(parent)).toEqual([]);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+});

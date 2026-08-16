@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,65 @@ const BIN = join(
   "bin",
   "audit.mjs",
 );
+
+/**
+ * Seed a directory so the deterministic Tier-0 checks all `pass` (or, for
+ * the CI/concurrency checks that need workflow files or merge history this
+ * fixture deliberately omits, honestly `unknown` — never `fail`). This is
+ * what a minimally "ready" repository looks like from this tool's own point
+ * of view: a guide that names its test command and states a guardrail, a
+ * lockfile, a `.gitignore` covering the four required entries, and a
+ * `.github/` contribution scaffold.
+ * @param {string} dir
+ */
+async function seedReadyRepo(dir) {
+  await writeFile(
+    join(dir, "package.json"),
+    JSON.stringify(
+      { name: "fixture", version: "0.0.0", scripts: { test: "npm test" } },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+  await writeFile(join(dir, "package-lock.json"), "{}\n", "utf8");
+  await writeFile(
+    join(dir, ".gitignore"),
+    "node_modules/\ndist/\n.env\n.DS_Store\n",
+    "utf8",
+  );
+  await writeFile(
+    join(dir, "AGENTS.md"),
+    [
+      "# AGENTS.md",
+      "",
+      "## Commands",
+      "",
+      "```bash",
+      "npm test",
+      "```",
+      "",
+      "## Guardrails",
+      "",
+      "Never commit secrets or credentials.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await mkdir(join(dir, ".github", "ISSUE_TEMPLATE"), { recursive: true });
+  await writeFile(
+    join(dir, ".github", "ISSUE_TEMPLATE", "bug.md"),
+    "---\nname: Bug report\n---\n\nRepro steps, expected, actual.\n",
+    "utf8",
+  );
+  await writeFile(
+    join(dir, ".github", "PULL_REQUEST_TEMPLATE.md"),
+    "## What changed\n\n## Why\n",
+    "utf8",
+  );
+  await writeFile(join(dir, ".github", "CODEOWNERS"), "* @example\n", "utf8");
+}
 
 /**
  * The CLI reports failures through its exit code, so a non-zero exit is a
@@ -60,9 +119,10 @@ describe("bin/audit.mjs", () => {
     }
   });
 
-  it("audits a real directory and exits 0 when nothing fails", async () => {
+  it("audits a real, seeded-ready directory and exits 0 when nothing fails", async () => {
     const dir = await mkdtemp(join(tmpdir(), "audit-cli-"));
     try {
+      await seedReadyRepo(dir);
       const r = await audit(["--path", dir]);
       expect(r.code).toBe(0);
       expect(r.stdout).toMatch(/AI-coding readiness/);
@@ -71,12 +131,68 @@ describe("bin/audit.mjs", () => {
     }
   });
 
-  it("emits well-formed JSON that is not truncated", async () => {
+  // The point of this milestone: a fresh project gets real findings rather
+  // than a screenful of shrugs. Verified only by hand until now.
+  it("gives an empty directory real failures and exits 1", async () => {
     const dir = await mkdtemp(join(tmpdir(), "audit-cli-"));
     try {
       const r = await audit(["--path", dir, "--json"]);
+      expect(r.code).toBe(1);
       const parsed = JSON.parse(r.stdout);
-      expect(parsed.findings).toHaveLength(4);
+      expect(parsed.summary.pass).toBe(0);
+      expect(
+        parsed.findings.filter((/** @type {any} */ f) => f.status === "fail"),
+      ).not.toHaveLength(0);
+      expect(
+        parsed.findings
+          .filter((/** @type {any} */ f) => f.status === "fail")
+          .map((/** @type {any} */ f) => f.id)
+          .sort(),
+      ).toEqual(["github.contribution-scaffold", "guide.exists"]);
+      expect(parsed.summary.fail).toBe(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Repo-controlled content must not make the audit read, count, or quote a
+  // file outside the directory it was pointed at.
+  it("never reads or quotes a file outside --path", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "audit-escape-"));
+    const dir = join(parent, "repo");
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(parent, "secret.md"),
+        "AWS_SECRET=never-share-this-value\n",
+        "utf8",
+      );
+      await writeFile(
+        join(dir, "CLAUDE.md"),
+        "# Guide\n\n@../secret.md\n\n## Guardrails\n\nNever touch production.\n",
+        "utf8",
+      );
+      const r = await audit(["--path", dir, "--json"]);
+      expect(r.stdout).not.toMatch(/AWS_SECRET/);
+      expect(r.stdout).not.toMatch(/never-share-this-value/);
+      expect(r.stdout).not.toMatch(/secret\.md/);
+      expect(r.stderr).not.toMatch(/AWS_SECRET/);
+      const budget = JSON.parse(r.stdout).findings.find(
+        (/** @type {any} */ f) => f.id === "guide.context-budget",
+      );
+      expect(budget.evidence).not.toMatch(/secret/);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("emits well-formed JSON that is not truncated", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "audit-cli-"));
+    try {
+      await seedReadyRepo(dir);
+      const r = await audit(["--path", dir, "--json"]);
+      const parsed = JSON.parse(r.stdout);
+      expect(parsed.findings).toHaveLength(10);
       expect(parsed.summary).toHaveProperty("unknown");
     } finally {
       await rm(dir, { recursive: true, force: true });

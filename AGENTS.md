@@ -10,7 +10,11 @@ A Claude Code plugin that **diagnoses** how ready a GitHub repository is for
 AI-assisted collaboration and then **adapts** it in one reviewable PR. The design
 center is a repo where several agents and several humans work at once.
 
-Status: pre-v0.1. The detection layer is being built; nothing is published.
+Status: v0.1.0. The detection layer (ten deterministic checks) is built and
+registered; it installs as a Claude Code plugin (`ai-ready`). It is **not
+published to npm** — `ai-coding-readiness` 404s on the registry, and `ai-ready`
+there is an unrelated third party's package. The adapt half — the interview,
+the marked regions, the one-PR delivery — is not built yet.
 
 ## Commands
 

@@ -1,0 +1,11 @@
+{
+  "name": "john-guerra",
+  "owner": { "name": "John Alexis Guerra Gómez" },
+  "plugins": [
+    {
+      "name": "ai-ready",
+      "source": "./",
+      "description": "Audit a repository's readiness for concurrent AI-assisted contribution"
+    }
+  ]
+}

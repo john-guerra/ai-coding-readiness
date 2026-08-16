@@ -8,3 +8,8 @@ docs/
 
 # Generated, never hand-edited.
 package-lock.json
+
+# SDD scratch: gitignored working files for in-flight plans. A gate that goes
+# red on an untracked scratch file is the "fails without a diff" pattern this
+# tool tells other people to move off their merge gate.
+.superpowers/

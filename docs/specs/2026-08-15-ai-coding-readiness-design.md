@@ -1,9 +1,26 @@
 # `ai-coding-readiness` — design
 
-**Date:** 2026-08-15 · **Revision:** 4 (after three independent review passes)
+**Date:** 2026-08-15 · **Revision:** 5
+**Revision 4** was the state after three independent review passes.
+**Revision 5** reconciles §5 and §13 with the milestone-1 detection layer as
+actually shipped: `guide.commands` added as a row of its own, `guide.exists`
+reclassified from **⚖** judgment to deterministic, `repo.hygiene`'s
+"secret-shaped tracked strings" removed because the implementation
+deliberately does not scan for them, and the check count corrected from 16 to
+17. This document is the binding authority, so it must not disagree with the
+shipped tool.
 **Status:** draft
 **Ships as:** the public repository `john-guerra/ai-coding-readiness`,
 installable as a Claude Code plugin. Command namespace `/ai-ready`.
+
+> **The npm name `ai-ready` is taken** — by an unrelated third party's package
+> ("Automatic Claude Code plugin discovery for npm dependencies", 1.0.0-alpha.2,
+> verified against the registry 2026-08-15). `ai-coding-readiness` is not
+> published at all (404). So `ai-ready` is this plugin's name and a `bin` alias
+> **only**, and no document here may spell an invocation `npx ai-ready …`: a
+> reader who types it runs someone else's code. Every CLI in this design is
+> invoked as `node "${CLAUDE_PLUGIN_ROOT}/bin/<script>"` until
+> `ai-coding-readiness` is published under that name.
 
 ---
 
@@ -228,12 +245,13 @@ governs *how many checks are installed*. They compose.
 
 | id | T | Detects | Precondition | Remediation |
 | --- | --- | --- | --- | --- |
-| `guide.exists` **⚖** | 0 | No agent guide, or one that never names build/test/run | — | **Invoke `/init`** (`CLAUDE_CODE_NEW_INIT=1`), which already interviews, explores with a subagent, and proposes before writing. We then add only the regions `/init` cannot know: guardrails, concurrency protocol, validation policy |
+| `guide.exists` | 0 | No agent guide at `CLAUDE.md`, `.claude/CLAUDE.md` or `AGENTS.md` — or one present but empty (no non-whitespace content, so `touch CLAUDE.md` cannot turn it green). Deliberately narrowed to the mechanical half: absence is directly observable, so this check is **deterministic, not ⚖**, and never reports `unknown`. Whether the guide is any *good* is split into `guide.commands` and `guide.guardrails` | — | **Invoke `/init`** (`CLAUDE_CODE_NEW_INIT=1`), which already interviews, explores with a subagent, and proposes before writing. We then add only the regions `/init` cannot know: guardrails, concurrency protocol, validation policy |
+| `guide.commands` | 0 | The guide corpus (the guide plus its `@`-imports) never names the project's own test command, read from `package.json` `scripts.test`. Matched as the whole script string anywhere, plus `npm test` / `npm run test`; a **single-word** script is additionally credited inside a code span or fence — never in prose, and never from a fence's language tag. The first word of a *multi-word* script is deliberately NOT derived: `node`, `npm`, `bash` are launchers, and crediting them passes any unrelated command | — | Add a Commands section to the guide (or a file it imports) naming the exact `scripts.test` command inside a code span or fence |
 | `guide.guardrails` | 0 | No "never touch" / destructive-action policy | — | Guardrails region + `deny` list in `.claude/settings.json` |
 | `guide.context-budget` | 0 | The **always-loaded** instruction budget — the guide plus unconditional `@`-imports — against the documented <200-line target. Imports do **not** reduce context; they load at launch. Correctly `paths:`-scoped rules count as *out* of budget, which is what makes the fix re-verifiable | **Only content with an identifiable path scope can move.** Measure that fraction before prescribing | Relocate path-scopable content to `.claude/rules/` with `paths:` frontmatter. **Everything else routes to §8 for mechanization, not relocation** — see the note below. Defer to `/doctor`'s trim check where available |
 | `test.assertion-free` | 1 | Tests containing no assertion at all | — | Reported per file and test name; **no auto-fix** — a test with no assertion needs an author, not a generator. **Its pass is never evidence that tests are meaningful** (see note) |
 | `github.contribution-scaffold` | 1 | Composite: issue templates · `PULL_REQUEST_TEMPLATE.md` · `CODEOWNERS` | — | Writes all three. A bug template that captures repro steps institutionalizes "verify against the reported scenario"; CODEOWNERS is the mechanism large teams actually use for the *human* half of §6 |
-| `repo.hygiene` | 0 | Missing lockfile; `.gitignore` gaps; secret-shaped tracked strings | Lockfile generation resolves the graph *now* | `npm i --package-lock-only`, **flagged as requiring a green CI run** — it can silently move transitive versions off what the maintainer has been running |
+| `repo.hygiene` | 0 | Missing lockfile; `.gitignore` gaps (node_modules, build output, `.env`, `.DS_Store`, matched against whole entries with `**/` and `/**` normalized away). **Explicitly NOT secret-shaped tracked strings** — that needs a recursive listing of tracked files which `Repo` does not provide, so the check says in its own pass evidence that it did not look, rather than implying it did | Lockfile generation resolves the graph *now* | `npm i --package-lock-only`, **flagged as requiring a green CI run** — it can silently move transitive versions off what the maintainer has been running |
 | `ci.gate-completeness` | 1 | CI does not resolve to format → test → build (parsed from the job graph, never grepped) | — | Adds the missing steps |
 | `ci.no-diff-can-fail-on-gate` | 1 | Merge-gate steps that fail without a code change — `npm audit`, license scans, external APIs | — | Moves them to a scheduled job that **updates one search-by-title issue, never files per run** (§11) |
 | `ci.e2e-sharded` | 1 | Browser tier unsharded on the merge gate | **No single spec dominates**; special fixtures (e.g. a big-library spec) must be set up in whichever shard draws them | Measure per-file duration; split dominant files; *then* `--shard` matrix. Each shard gets its own runner → own server → own temp dir, so hermeticity holds with **no test rewrites** |
@@ -246,7 +264,15 @@ governs *how many checks are installed*. They compose.
 | `docs.unenforced-invariants` **⚖** | 2 | MUST/NEVER statements with no mechanical backing; **plus docs asserting numbers the repo contradicts** | — | Per §8: tests, lint rules, CI greps. Stale numbers corrected in place |
 
 **⚖ = judgment layer.** Evaluated by the skill, not the binary; advisory only;
-never gates. Two of sixteen.
+never gates. **One of seventeen** — `docs.unenforced-invariants`.
+`guide.exists` was marked ⚖ in revision 4 and is not: it answers a mechanical
+question and ships in the deterministic binary.
+
+**Built in milestone 1 (v0.1):** the ten deterministic checks
+`guide.exists`, `guide.commands`, `guide.guardrails`, `guide.context-budget`,
+`repo.hygiene`, `github.contribution-scaffold`, `ci.no-diff-can-fail-on-gate`,
+`ci.e2e-sharded`, `ci.flake-observability`, `concurrency.pr-path-contention`.
+The other seven rows are designed, not built.
 
 **Two notes the check table cannot carry.**
 
@@ -470,7 +496,9 @@ by which point the code is already merged.
 > swap is now unconditional**; a missing block adds a separate `missing-handoff`
 > label.
 
-**3 — `npx ai-ready validate` makes it cheap** *(v0.2)*. Reads the
+**3 — a `validate` subcommand makes it cheap** *(v0.2)*. Invoked the way the
+audit is — `node "${CLAUDE_PLUGIN_ROOT}/bin/audit.mjs" validate` — and **not**
+as `npx ai-ready validate`; see the note under "Ships as". Reads the
 `needs-validation` queue; per issue prints the block, offers to run the command,
 takes `[p]ass / [f]ail / [s]kip`. Pass closes with a comment; fail relabels and
 captures why.
@@ -577,14 +605,15 @@ remains is defensible on principle without leaning on unsupported evidence:
 
 ## 13. Scope
 
-**v0.1 ships:** node pack · the 16 checks in §5 · `/ai-ready:audit` and
+**v0.1 ships:** node pack · **ten** of the 17 checks in §5 (the ten listed
+under the table there; the rest are designed, not built) · `/ai-ready:audit` and
 `/ai-ready:adapt` · skills `adapt-repo`, `working-issues`, `enforce-a-rule` ·
 marked regions + manifest + idempotency gate · the validation block and its
 **PR-open required check**.
 
 | Deferred | Trigger |
 | --- | --- |
-| `npx ai-ready validate` CLI | v0.2 — fix the enforcement point first; the block + gate deliver value alone |
+| `validate` subcommand (never spelled `npx ai-ready validate` — see "Ships as") | v0.2 — fix the enforcement point first; the block + gate deliver value alone |
 | `invariant-reviewer` agent + PR job | v0.2 — the thesis ships without a CI bot |
 | Gate-rung timing (`loop.timing`) | v0.2 — slow, environment-dependent, and its fix presupposes a tagged subset. The cheap half (docs asserting stale numbers) folds into `docs.unenforced-invariants` |
 | Python pack | The node pack interface proven against a second real repo — not written blind |

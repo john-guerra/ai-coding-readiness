@@ -1,6 +1,6 @@
 {
   "name": "ai-coding-readiness",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Diagnose and adapt a GitHub repo for AI-assisted collaboration under concurrent contributors",
   "license": "MIT",
   "type": "module",
@@ -8,11 +8,14 @@
     "node": ">=20"
   },
   "bin": {
-    "ai-coding-readiness": "./bin/audit.mjs"
+    "ai-coding-readiness": "./bin/audit.mjs",
+    "ai-ready": "./bin/audit.mjs"
   },
   "files": [
     "bin",
-    "lib"
+    "lib",
+    ".claude-plugin",
+    "skills"
   ],
   "scripts": {
     "test": "vitest run",
