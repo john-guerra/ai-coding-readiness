@@ -174,6 +174,79 @@ describe("guide.commands", () => {
     expect(f.evidence).toMatch(/check/);
   });
 
+  // The derived single-word token is only safe when it IS the whole script.
+  // `node`, `npm`, `bash`, `pnpm` are launchers: crediting them means any
+  // unrelated command in the guide satisfies the check, which is exactly the
+  // false-pass class A2 closed for the fixed word list.
+  it("does not pass `node --test` when the guide's only code is an unrelated node command", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "node --test" }),
+          "CLAUDE.md": "# Guide\n\nRun `node bin/x.mjs --path .` to audit.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+  });
+
+  it("does not pass `npm run test:unit` when the guide's only code is `npm install`", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "npm run test:unit" }),
+          "CLAUDE.md": "# Guide\n\nRun `npm install` first.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+  });
+
+  it("does not pass `bash scripts/test.sh` on a ```bash fence containing something else", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "bash scripts/test.sh" }),
+          "CLAUDE.md": "# Guide\n\n```bash\ngit status\n```\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).not.toMatch(/```bash/);
+  });
+
+  // Independent of the multi-word rule above: a fence's language tag is never
+  // a command, even when the script really is that single word.
+  it("does not credit a code fence's language tag as the command", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "bash" }),
+          "CLAUDE.md": "# Guide\n\n```bash\ngit status\n```\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+  });
+
+  it("still passes a multi-word script documented literally", async () => {
+    for (const script of [
+      "node --test",
+      "npm run test:unit",
+      "turbo run test",
+    ]) {
+      const f = await commands.run(
+        createFakeRepo({
+          files: {
+            "package.json": pkg({ test: script }),
+            "CLAUDE.md": `# Guide\n\n\`\`\`bash\n${script}\n\`\`\`\n`,
+          },
+        }),
+      );
+      expect(f.status, script).toBe("pass");
+    }
+  });
+
   it("passes but quotes the matched line, even when the guide negates it", async () => {
     const f = await commands.run(
       createFakeRepo({
