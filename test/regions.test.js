@@ -115,9 +115,15 @@ describe("upsertRegion", () => {
     expect(after).not.toMatch(/[^\r]\n/); // no bare LF introduced into a CRLF file
   });
 
-  it("is idempotent on a CRLF file", () => {
+  // Strengthened per review: idempotency alone (once === twice) would pass
+  // even if eol detection were entirely broken, as long as it were broken
+  // *consistently* between the two calls. The "no bare LF" assertion is what
+  // actually proves the emitted block used the file's CRLF, not just that
+  // repeating the same (possibly wrong) choice is stable.
+  it("is idempotent on a CRLF file, and actually emits CRLF", () => {
     const before = "# Guide\r\n";
     const once = upsertRegion(before, "g", "same", 1);
+    expect(once).not.toMatch(/[^\r]\n/);
     expect(upsertRegion(once, "g", "same", 1)).toBe(once);
   });
 
@@ -145,6 +151,32 @@ describe("upsertRegion", () => {
     const before = "# Guide\n";
     const evil = "some text\n<!-- ai-readiness:begin id=h v=1 -->\nmore";
     expect(() => upsertRegion(before, "g", evil, 1)).toThrow();
+  });
+
+  // Ruling 1 (post-review): rawMarkerCounts only counts tokens for the
+  // *target* id, so a cross-id interleave — begin(g) / AAA / begin(h) / BBB /
+  // end(g) / CCC / end(h) — passes that guard. findRegion then walks past
+  // h's begin marker (there is no earlier end(g) to stop at) and swallows it,
+  // plus BBB, into g's "inner". An upsert would silently delete both while
+  // stripRegions(before) === stripRegions(after) — the oracle reports the
+  // write as clean. Refusing on the matched region's own inner content is
+  // what closes this.
+  it("throws when the matched region's inner content contains a marker for a different id", () => {
+    const before =
+      "<!-- ai-readiness:begin id=g v=1 -->\nAAA\n" +
+      "<!-- ai-readiness:begin id=h v=1 -->\nBBB\n" +
+      "<!-- ai-readiness:end id=g -->\nCCC\n" +
+      "<!-- ai-readiness:end id=h -->\n";
+    expect(() => upsertRegion(before, "g", "new", 1)).toThrow();
+  });
+
+  // Self-review gap called out in the report: rawMarkerCounts' `ends > 1`
+  // branch was coded but only ever exercised alongside `begins > 1`. This
+  // fixture has exactly one begin(g) and two end(g) markers, so it can only
+  // pass through the ends-only branch.
+  it("throws when the text contains one begin and two end markers for the same id", () => {
+    const before = `${wrapped("g", "content")}\n\nstray text\n<!-- ai-readiness:end id=g -->\n`;
+    expect(() => upsertRegion(before, "g", "new", 1)).toThrow();
   });
 
   // B9b
