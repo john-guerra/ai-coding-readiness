@@ -32,7 +32,10 @@ node bin/adapt.mjs --path <repo> --write    # apply it
 ### What `adapt` will and will not touch
 
 - **Dry run is the default.** Without `--write` it prints what it would do —
-  including each fix's precondition — and changes nothing.
+  every action, in order, with the precondition attached to each and the body
+  it would write — and changes nothing. It runs the same convergence loop
+  `--write` runs, against an in-memory copy, so what you read is the whole plan
+  and not the first pass of it.
 - **It never replaces a file it did not create**, and never rewrites a marked
   region whose content no longer matches what it recorded writing. A region it
   has no record of writing is also left alone: no record means the hash is
@@ -47,6 +50,21 @@ node bin/adapt.mjs --path <repo> --write    # apply it
   `npm run test:idempotent`, which seeds a repo (with CRLF line endings, where
   a naive region matcher appends a fresh region every run), writes, commits,
   writes again, and fails if anything moved. It is part of `npm test`.
+
+### Two things v0.2 changed for anyone parsing `--json`
+
+- **`bin/audit.mjs --json` now emits an `action` field on every finding**, and
+  for the three that carry one it includes the full generated body inline — a
+  30-line issue template, a pull-request template, a `## Guardrails` section.
+  Findings are otherwise unchanged and no field was removed, but a consumer
+  that diffs whole finding objects, or that assumed the payload stayed small,
+  will notice. The audit is still read-only; only the shape of what it reports
+  grew.
+- **`bin/adapt.mjs --json`**: in a dry run, `planned` is now the convergence
+  loop's own log — one entry per action with `pass`, `outcome`, `detail` and
+  `content`, including actions that only a later pass reaches. Under `--write`
+  it keeps its previous meaning (what is still outstanding afterwards) and
+  `applied` omits `content`, since those bytes are already in `git diff`.
 
 ### Commit `.ai-readiness/manifest.json`
 

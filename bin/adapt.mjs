@@ -190,11 +190,31 @@ async function inspectTree(path) {
       dirty: [],
     };
   }
-  const { stdout } = await exec("git", ["status", "--porcelain", "--", "."], {
-    cwd: path,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  return { isRepo: true, dirty: stdout.split("\n").filter((l) => l !== "") };
+  // Guarded for the same reason `rev-parse` is: this promise rejecting outside
+  // a try is an unhandled rejection and a stack trace, where the contract is
+  // exit 2 with a sentence. `rev-parse` succeeding does not make `status` safe
+  // — a corrupt index, an unreadable object, or a maxBuffer overflow on a very
+  // dirty tree all reject here.
+  try {
+    const { stdout } = await exec("git", ["status", "--porcelain", "--", "."], {
+      cwd: path,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return { isRepo: true, dirty: stdout.split("\n").filter((l) => l !== "") };
+  } catch (err) {
+    // Not reported as "clean". A tree whose state cannot be read is one where
+    // a generated diff cannot be reviewed, which is the entire reason for the
+    // check — so it lands in the same refusal as "not a repository", which
+    // `--allow-dirty` deliberately does not override.
+    return {
+      isRepo: false,
+      why:
+        `${path} is a git repository, but its status could not be read ` +
+        `(${messageOf(err)}), so this run cannot tell whether there is a ` +
+        `diff to review`,
+      dirty: [],
+    };
+  }
 }
 
 /**
@@ -452,7 +472,9 @@ async function main() {
         manifest,
         onEntry(entry) {
           if (opts.json) return;
-          if (entry.precondition && entry.pass === 1) {
+          // Every attempt, not once per check: a caveat printed only for the
+          // first of two templates is a caveat suppressed for the second.
+          if (entry.precondition) {
             process.stderr.write(
               `  before ${entry.id}: ${entry.precondition}\n`,
             );

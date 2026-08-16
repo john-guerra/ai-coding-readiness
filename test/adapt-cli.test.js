@@ -459,6 +459,22 @@ describe("bin/adapt.mjs — the dirty-tree rule", () => {
     });
   });
 
+  // `git status` ran outside the try/catch that wraps `git rev-parse`, so a
+  // failure there was an unhandled rejection and a stack trace instead of the
+  // promised exit 2. `rev-parse` succeeding does not make `status` safe: a
+  // corrupt index is enough.
+  it("exits 2 rather than crashing when git status fails", async () => {
+    await withRepo(async (dir) => {
+      await writeFile(join(dir, ".git", "index"), "GARBAGE", "utf8");
+      const r = await adapt(["--path", dir, "--write"]);
+      expect(r.code).toBe(2);
+      expect(r.stderr).toMatch(/status could not be read/i);
+      // No stack trace: this is a refusal, not a crash.
+      expect(r.stderr).not.toMatch(/at .*adapt\.mjs:\d+/);
+      expect(await readMaybe(dir, ".github/ISSUE_TEMPLATE/bug.md")).toBeNull();
+    });
+  });
+
   // No diff, no review, no undo. `--allow-dirty` is about a dirty tree, not
   // about the absence of version control, so it does not override this.
   it("refuses --write outside a git repository, even with --allow-dirty", async () => {

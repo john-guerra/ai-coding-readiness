@@ -122,6 +122,11 @@ is load-bearing. Breaking one is an incomplete change, not a nitpick.
   a brand-new region every run, unbounded. Every regex in `lib/regions.js` is
   `\r?\n`, and the idempotency gate uses a CRLF fixture because a macOS-only one
   would never see it.
+- **`lstat`/`O_NOFOLLOW` cannot see a hardlink** — the entry _is_ the file, so
+  `O_TRUNC` wrote through an inode shared outside the root. Every write now
+  goes to a **same-directory** temp file `rename()`d over the target, and both
+  sides realpath before acting (`lib/repo.js` reads too: a symlinked guide
+  leaked an outside file into a public report). An in-root symlink is accepted.
 - **`adapt`'s convergence loop runs only `ACTION_CAPABLE`**, then the full set
   once for the summary — all ten per pass would mean up to five `gh` calls over
   the one permitted network path to answer a question no action can change.

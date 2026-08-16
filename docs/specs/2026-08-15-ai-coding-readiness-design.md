@@ -164,6 +164,11 @@ Mechanism, borrowed from `all-contributors`:
 - `.ai-readiness/manifest.json` records `file → region → hash → status` at write
   time. On re-run: hash unchanged → safe to update; hash changed → the human
   edited it, so **propose a diff, never overwrite**.
+  - **v0.2 ships only the "never overwrite" half**, and only that half should
+    be read as satisfied. An edited region is refused with a reason naming the
+    file and the region id; nothing shows what would have been written, so
+    there is no diff to accept or reject and no way to see what an update
+    would have added. Deferred — see the table in "Deferred".
 - `status: active | retired`. When a later version stops generating a region it
   is marked `retired` and removal offered — otherwise abandoned regions
   accumulate across every adopting repo with nothing knowing they are dead.
@@ -613,6 +618,7 @@ marked regions + manifest + idempotency gate · the validation block and its
 
 | Deferred | Trigger |
 | --- | --- |
+| §4's "propose a diff" on an edited region | v0.2 refuses and says why, but shows nothing. Needs a decision about where the diff goes (stdout, a `.rej`-style file, a PR comment) and how a partial accept works; refusing is the safe half and it ships alone |
 | `validate` subcommand (never spelled `npx ai-ready validate` — see "Ships as") | v0.2 — fix the enforcement point first; the block + gate deliver value alone |
 | `invariant-reviewer` agent + PR job | v0.2 — the thesis ships without a CI bot |
 | Gate-rung timing (`loop.timing`) | v0.2 — slow, environment-dependent, and its fix presupposes a tagged subset. The cheap half (docs asserting stale numbers) folds into `docs.unenforced-invariants` |
