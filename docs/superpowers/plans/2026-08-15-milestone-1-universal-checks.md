@@ -1572,3 +1572,209 @@ One duplication is deliberate: `countLines` also exists in `concurrency-pr-path-
 ## Execution Handoff
 
 Plan complete and saved to `docs/superpowers/plans/2026-08-15-milestone-1-universal-checks.md`.
+
+---
+
+# Amendments after independent plan review
+
+**These supersede the task text above wherever they conflict.** An independent
+review of this plan found four defects that would have shipped, three of them
+demonstrated against *this* repository. Each amendment names the task and step
+it replaces.
+
+## A1 — supersedes Task 1's `resolveImports` interface, and Task 2 entirely
+
+**The defect.** `readGuide` returns the first hit in `GUIDE_PATHS` and Task 2's
+checks search only that file's text. This repository's `CLAUDE.md` is a 33-line
+stub that delegates everything through `@AGENTS.md`, and contains no test
+command — verified, `grep -c 'npm test\|vitest\|jest' CLAUDE.md` is **0**, while
+`AGENTS.md` has it. So `guide.exists` reports **`fail`** here, on the exact
+delegating structure the official memory documentation recommends. Task 6 Step 7
+then instructs "fix the repo, not the check", which would be the wrong
+resolution: the check is wrong.
+
+**Task 1 changes.** `resolveImports` must return the imported **text**:
+
+```js
+/** @returns {Promise<{files: Array<{path: string, lines: number, text: string}>, alreadyCounted: string[]}>} */
+```
+
+and gain a companion:
+
+```js
+/**
+ * The guide and everything it imports, as one searchable body.
+ * A guide that delegates through `@AGENTS.md` is the documented pattern; a
+ * check that reads only the entry file would fail it.
+ * @param {Repo} repo
+ * @returns {Promise<{paths: string[], text: string}|null>}
+ */
+export async function guideCorpus(repo) { … }
+```
+
+`cycles` is renamed `alreadyCounted`: it collects any already-seen import, so a
+diamond (the same file imported twice) lands in it and is not a cycle. Nothing
+consumes it yet; the honest name costs nothing now and prevents a wrong
+inference later.
+
+**Task 2 splits into three checks.** A check called `guide.exists` that reports
+`fail` when the guide plainly exists reads wrong in a report, where most readers
+see the id and the status and never the evidence:
+
+| id | tier | Asks | `unknown` when |
+| --- | --- | --- | --- |
+| `guide.exists` | 0 | Is there a guide at any of `GUIDE_PATHS`? | never — absence is directly observable |
+| `guide.commands` | 0 | Does the **corpus** name the command `scripts.test` declares? | no guide, no `package.json`, unparseable manifest, or no `test` script |
+| `guide.guardrails` | 0 | Does the corpus state a prohibition, or does `.claude/settings.json` deny anything? | no guide |
+
+This takes the spec's check count from 16 to 17. Record it as a spec amendment.
+
+## A2 — supersedes Task 2's `guide.commands` pass predicate
+
+The planned predicate is a fixed `/npm\s+(run\s+)?test|\bvitest\b|\bjest\b/`,
+which never reads the project's actual command. Two defects in one line:
+
+- **False pass** — a project running mocha, ava or `node:test` passes because
+  the word "vitest" appears anywhere, including a devDependency list or a
+  "we migrated off vitest" note. The evidence then claims the guide "names the
+  project's test command", which was not observed.
+- **False fail** — a project whose `scripts.test` is `turbo run test`,
+  `make test` or `pytest`, documented correctly, fails.
+
+**Derive the tokens from the value of `scripts.test`.** Take its first
+executable word plus the whole string, and accept `npm test` / `npm run test`
+as always-valid invocations. Search the corpus for any of them, and name in the
+evidence which token matched and in which file.
+
+## A3 — supersedes Task 2's `guide.guardrails` evidence
+
+`PROHIBITION` matching anywhere is a false pass, and this repo proves it:
+`CLAUDE.md` line 12 reads *"`node bin/audit.mjs --path .` must not report a
+`fail`"* — a sentence about the tool's own self-audit, not a guardrail. The
+check would emit `pass` with evidence "states at least one prohibition."
+
+Minimum fix, required: **quote the matched line and name its file in the
+evidence.** That converts an unverifiable assertion into a citation a reader can
+reject. Also: strip code spans and fences before matching (an example containing
+"do not" must not count); add the curly apostrophe `don’t`; drop `do NOT` from
+the alternation, which is dead under `/i`.
+
+## A4 — supersedes Task 1's import regex handling
+
+The review ran the regex against real forms. The dangerous direction is the
+opposite of the one the plan worried about — **missing an import silently
+under-counts the budget, which is the false-`pass` direction**:
+
+| input | captured | outcome |
+| --- | --- | --- |
+| `See @docs/a.md.` | `docs/a.md.` | dropped |
+| `See @docs/a.md, then` | `docs/a.md,` | dropped |
+| `**@docs/a.md**` | *(no match)* | dropped |
+| `@types/node`, `@media`, `a@b.com` | — | harmless, resolve to nothing |
+
+Trim trailing `.,;:!?` and surrounding `*`/`_` before resolving. Skip `~`- and
+`/`-rooted paths explicitly. Document in the JSDoc that every path resolves
+against the **repo root**, not the importing file, so a `.claude/CLAUDE.md`
+using relative imports under-counts.
+
+## A5 — supersedes Task 3's rules and multiplier handling
+
+- `/^paths\s*:/m` matches `paths:` with no value and `paths: []`. If an empty
+  list matches everything, the rule *is* always loaded and excluding it
+  under-counts — the false-`pass` direction. **Require a non-empty list.**
+- `/^---\n/` fails on CRLF, a BOM, or a leading blank line, counting a scoped
+  rule as always-loaded. Normalize before matching.
+- `Math.round(total / 200)` prints "1×" for 201, 250 and 299 lines. Use
+  `(total / BUDGET_LINES).toFixed(1)`, or drop the multiplier.
+- `alwaysLoadedRules` is non-recursive by `listFiles`' contract, so
+  `.claude/rules/api/x.md` is invisible. State it in the JSDoc.
+- **Verify the premise before building on it:** the budget model rests on
+  "`.claude/rules/*.md` without `paths:` loads every session." Confirm it
+  against current documentation; if it cannot be confirmed, the check must state
+  the assumption in its evidence rather than silently pricing it.
+- Task 3's assertion `/45[0-9]|4[0-9][0-9]/` is tautological — the itemised line
+  `docs/big.md — 400 lines` satisfies it regardless of the total. Assert `451`.
+
+## A6 — supersedes Task 4's `.gitignore` matching and pass evidence
+
+The planned patterns are satisfied by text that does not mean what the check
+concludes. This `.gitignore` satisfies three of four requirements:
+
+```
+# node_modules is tracked on purpose
+distribution/
+.envrc
+# never commit .DS_Store
+```
+
+**Strip comment lines and `!`-negations first, then anchor to whole entries:**
+`/^\/?\.env(\/|$)/m`, `/^\/?(dist|build)\/?$/m`, `/^\/?\.DS_Store$/m`,
+`/^\/?node_modules\/?$/m`.
+
+The pass evidence must say the lockfile is **present**, not "committed" —
+`readFile` sees the working tree and cannot tell a committed file from an
+ignored one. Same over-claim class the plan is careful about for secrets.
+Likewise, a `.gitignore` gap is "not found at the repo root", since coverage can
+legitimately live in a nested `.gitignore` or `.git/info/exclude`.
+
+**Invert the secrets test.** The plan asserts the evidence must *never mention*
+secrets, which forbids the very disclosure that keeps the check's name from
+over-claiming. Replace it: the pass evidence **must state what was not
+examined** — "does not look for tracked secrets or credentials; that needs a
+listing of tracked files this check does not have."
+
+> **Open question for the maintainer.** The reviewer argues the *name* is what a
+> reader indexes on, and recommends renaming this `repo.lockfile-and-ignore`
+> until the secret half exists, reclaiming `repo.hygiene` later. The id is kept
+> as specified for now — changing a spec-defined id mid-milestone forks the spec
+> — but the argument is sound and the rename is cheap before first publish.
+
+## A7 — supersedes Task 5's issue-template predicate
+
+`issueDir.length === 0` passes on a directory containing only `config.yml`,
+which is the single most common way `.github/ISSUE_TEMPLATE/` exists with no
+template in it. **Require at least one entry that is not `config.yml`/`config.yaml`.**
+
+Task 5's test named "does not accept an empty ISSUE_TEMPLATE directory" actually
+tests a *missing* directory — `createFakeRepo` cannot represent an empty one.
+Rename it and add the `config.yml`-only case.
+
+## A8 — new Task 6 steps
+
+Three things the plan makes binding but budgets no work for.
+
+**A8.1 — `test/audit-cli.test.js` breaks in two places.**
+- `:79` asserts `parsed.findings` has length **4**; after registration it is 9.
+- `:63-72` runs against an **empty `mkdtemp` directory** and asserts exit 0.
+  After this milestone `guide.exists` and `github.contribution-scaffold` both
+  fail there, so the CLI exits 1. That is the milestone working. Seed the
+  fixture with a guide, a lockfile, a `.gitignore` and a `.github/` scaffold, or
+  rewrite the test's intent.
+
+**A8.2 — this repository has no `.github/` at all.** Verified. It would fail its
+own `github.contribution-scaffold`, and "this repo must not report a `fail`" is
+binding. Create `.github/ISSUE_TEMPLATE/bug.md`, `.github/PULL_REQUEST_TEMPLATE.md`
+and `.github/CODEOWNERS`, and add them to the File Structure table.
+
+**A8.3 — `npx ai-ready` does not resolve to this package.** `npx` resolves by
+**package** name; a `bin` alias only applies after installation. `SKILL.md` — the
+most-read artifact in this milestone — currently documents a command that fetches
+whatever npm package happens to be called `ai-ready`. Use
+`npx ai-coding-readiness --path <repo>`, or `npx -p ai-coding-readiness ai-ready`.
+Register the `ai-ready` npm name defensively before first publish.
+
+**A8.4 — corrected ground truth.** `CLAUDE.md` + `AGENTS.md` is **145** lines
+(33 + 112), not ~120. The verdict (`pass`, under 200) is unchanged; the number
+handed to the executor was wrong.
+
+**A8.5 — decide `package.json` `files`.** `["bin","lib"]` excludes
+`.claude-plugin/` and `skills/`. Harmless if the plugin is only installed from
+git via the marketplace, wrong if it is ever `npm install`ed. Decide explicitly.
+
+**A8.6 — `AGENTS.md:13`** still says "pre-v0.1 … nothing is published". Update it
+alongside the README.
+
+## A9 — uniform verification
+
+Task 4 commits without running the full suite or `typecheck`; Tasks 1, 3 and 5
+do. Every task runs `npm test && npm run typecheck` before committing.
