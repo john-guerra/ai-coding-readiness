@@ -224,14 +224,83 @@ describe("bin/adapt.mjs — dry run", () => {
       const parsed = JSON.parse(r.stdout);
       expect(parsed.mode).toBe("dry-run");
       expect(parsed.findings).toHaveLength(10);
-      expect(parsed.planned.map((/** @type {any} */ p) => p.id).sort()).toEqual(
-        ["github.contribution-scaffold", "guide.guardrails", "repo.hygiene"],
-      );
+      // Four actions, not three: `github.contribution-scaffold` carries one
+      // action per finding and emits its second template on the next pass.
+      expect(
+        parsed.planned.map((/** @type {any} */ p) => p.path).sort(),
+      ).toEqual([
+        ".github/ISSUE_TEMPLATE/bug.md",
+        ".github/PULL_REQUEST_TEMPLATE.md",
+        ".gitignore",
+        "AGENTS.md",
+      ]);
       // The caveat travels with the plan in machine-readable output too.
       const guardrails = parsed.planned.find(
         (/** @type {any} */ p) => p.id === "guide.guardrails",
       );
       expect(guardrails.precondition).toMatch(/generic starting point/i);
+      // And so does the body, which is what the precondition tells the reader
+      // to read.
+      expect(guardrails.content).toMatch(/## Guardrails/);
+    });
+  });
+
+  // The dry run used to run the checks ONCE, so it never mentioned the pull
+  // request template — which `--write` then created. The skill tells an agent
+  // to show the user the dry run and let them decide; they decided on an
+  // incomplete list and got a file they were never shown.
+  it("names every file --write creates, including one a later pass opens up", async () => {
+    await withRepo(async (dir) => {
+      const dry = await adapt(["--path", dir]);
+      expect(dry.code).toBe(0);
+      expect(dry.stdout).toMatch(/\.github\/ISSUE_TEMPLATE\/bug\.md/);
+      expect(dry.stdout).toMatch(/\.github\/PULL_REQUEST_TEMPLATE\.md/);
+
+      // The claim, checked rather than asserted: every path the dry run named
+      // is a path --write actually creates, and nothing else appears.
+      const dryPaths = new Set(
+        JSON.parse((await adapt(["--path", dir, "--json"])).stdout).planned.map(
+          (/** @type {any} */ p) => p.path,
+        ),
+      );
+      await adapt(["--path", dir, "--write"]);
+      const { stdout: touched } = await git(dir, ["status", "--porcelain"]);
+      const actual = new Set(
+        touched
+          .split("\n")
+          .filter(Boolean)
+          .map((l) => l.slice(3).trim())
+          // The manifest is not an action; the dry run names it in prose.
+          .filter((p) => !p.startsWith(".ai-readiness/"))
+          // `?? .github/` is git's directory summary; expand it.
+          .flatMap((p) =>
+            p === ".github/"
+              ? [
+                  ".github/ISSUE_TEMPLATE/bug.md",
+                  ".github/PULL_REQUEST_TEMPLATE.md",
+                ]
+              : [p],
+          ),
+      );
+      expect([...actual].sort()).toEqual([...dryPaths].sort());
+    });
+  });
+
+  // The precondition on each fix says the generated content is the thing to
+  // read. It was printed only for `append-lines`, so a 30-line issue template
+  // and a generated `## Guardrails` section went in sight-unseen.
+  it("prints the body of every action, not just append-lines", async () => {
+    await withRepo(async (dir) => {
+      const r = await adapt(["--path", dir]);
+      // append-lines (was already shown)
+      expect(r.stdout).toMatch(/^dist\/$/m);
+      // write-region
+      expect(r.stdout).toMatch(/## Guardrails/);
+      expect(r.stdout).toMatch(/Never\*\* commit or print a credential/);
+      // write-file, both of them
+      expect(r.stdout).toMatch(/name: Bug report/);
+      expect(r.stdout).toMatch(/## Steps to reproduce/);
+      expect(r.stdout).toMatch(/## Risk and rollback/);
     });
   });
 
@@ -520,6 +589,21 @@ describe("bin/adapt.mjs — a failing action", () => {
         expect(await readFile(join(dir, "AGENTS.md"), "utf8")).toMatch(
           /ai-readiness:begin id=guardrails/,
         );
+
+        // KNOWN LIMIT, pinned deliberately. `settled` is now keyed by
+        // id+kind+path rather than by check id, so settling one action no
+        // longer retires the ones behind it. That is not enough to get the
+        // pull request template written here: a `Finding` carries ONE action,
+        // and `github.contribution-scaffold` is a pure function of repository
+        // state — while the issue template is missing it re-emits the same
+        // issue action every pass, which is settled, so the loop never reaches
+        // its second artefact. Unblocking this needs a finding that can carry
+        // an action LIST, which this milestone deliberately did not build. The
+        // day it does, this assertion goes red and somebody has to decide,
+        // rather than the gap staying invisible.
+        expect(
+          await readMaybe(dir, ".github/PULL_REQUEST_TEMPLATE.md"),
+        ).toBeNull();
       },
       {
         // A DIRECTORY where the issue template goes. The check does not count

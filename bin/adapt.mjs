@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 
 import { createFsRepo } from "../lib/repo.js";
 import { createFsWriter } from "../lib/writer.js";
+import { createOverlay } from "../lib/overlay.js";
 import { runChecks } from "../lib/registry.js";
 import { renderMarkdown, renderJson } from "../lib/report.js";
 import { applyAction } from "../lib/actions.js";
@@ -199,6 +200,12 @@ async function inspectTree(path) {
 /**
  * One entry in the run log: what was attempted, and what came of it.
  *
+ * `content` is the body that was (or would be) written. It is carried because
+ * the dry run has to PRINT it: the whole point of the dry run is that somebody
+ * reads what is about to go into their guide, and the precondition on each fix
+ * tells them the content is the thing to read. It is dropped from `--write`'s
+ * JSON `applied` list, where `git diff` is the better source.
+ *
  * @typedef {Object} LogEntry
  * @property {number} pass
  * @property {string} id
@@ -207,23 +214,140 @@ async function inspectTree(path) {
  * @property {string|null} precondition
  * @property {"changed"|"skipped"|"failed"} outcome
  * @property {string} detail
+ * @property {string} content
  */
 
 /**
- * @param {import('../lib/finding.js').Finding} f
+ * One line naming what an entry does, for the report.
+ * @param {LogEntry} e
  */
-function describeAction(f) {
-  const a = f.action;
-  if (a === null) return "";
-  if (a.kind === "write-file") return `create \`${a.path}\``;
-  if (a.kind === "append-lines") {
-    return `append ${a.lines.length} line(s) to \`${a.path}\``;
+function describeEntry(e) {
+  if (e.kind === "write-file") return `create \`${e.path}\``;
+  if (e.kind === "append-lines") {
+    const n = e.content === "" ? 0 : e.content.split("\n").length;
+    return `append ${n} line(s) to \`${e.path}\``;
   }
-  return `write the \`${a.id}\` region in \`${a.path}\``;
+  return `write a generated region in \`${e.path}\``;
+}
+
+/**
+ * The body an action would put on disk, for the dry run to show.
+ * @param {import('../lib/actions.js').Action} a
+ */
+function bodyOf(a) {
+  if (a.kind === "write-file") return a.content;
+  if (a.kind === "append-lines") return a.lines.join("\n");
+  return a.inner;
 }
 
 /** @param {unknown} err */
 const messageOf = (err) => (err instanceof Error ? err.message : String(err));
+
+/**
+ * Run the convergence loop until nothing changes, and report what happened.
+ *
+ * Both modes run this. `--write` runs it against the real repository and a
+ * real writer; the dry run runs it against an in-memory overlay, so the plan
+ * it prints is the WHOLE plan rather than the first pass of it. A finding
+ * carries one action, and `github.contribution-scaffold` emits a sequence, so
+ * a single-pass dry run silently omits the second template.
+ *
+ * @param {Object} args
+ * @param {import('../lib/repo.js').Repo} args.repo
+ * @param {import('../lib/writer.js').Writer} args.writer
+ * @param {import('../lib/manifest.js').Manifest} args.manifest
+ * @param {(entry: LogEntry) => void} [args.onEntry] - progress, printed live
+ * @returns {Promise<{log: LogEntry[], passes: number, capHit: boolean}>}
+ */
+async function converge({ repo, writer, manifest, onEntry }) {
+  /** @type {LogEntry[]} */
+  const log = [];
+  let passes = 0;
+  let capHit = false;
+
+  // Actions that were attempted and changed nothing. Keyed by id, kind AND
+  // path, not by id alone: a check may emit a different action next pass (that
+  // is how `github.contribution-scaffold` gets from the issue template to the
+  // pull request template), and retiring the whole CHECK on one settled action
+  // retires the ones behind it too. Every "no change" reason this layer
+  // produces is deterministic — the file is already there, the region was
+  // edited by hand, the document has duplicate markers, the writer refused the
+  // path — so re-attempting the SAME action would print the same line again
+  // and could never terminate on its own.
+  /** @type {Set<string>} */
+  const settled = new Set();
+  /** @param {LogEntry} e */
+  const settledKey = (e) => `${e.id}#${e.kind}#${e.path}`;
+
+  for (;;) {
+    if (passes >= MAX_PASSES) {
+      capHit = true;
+      break;
+    }
+    passes++;
+
+    const found = await runChecks(ACTION_CAPABLE, repo);
+    const todo = found.filter((f) => {
+      if (f.action === null) return false;
+      const a = /** @type {import('../lib/actions.js').Action} */ (f.action);
+      return !settled.has(`${f.id}#${a.kind}#${a.path}`);
+    });
+    if (todo.length === 0) break;
+
+    let changedThisPass = false;
+    for (const f of todo) {
+      const action = /** @type {import('../lib/actions.js').Action} */ (
+        f.action
+      );
+      const base = {
+        pass: passes,
+        id: f.id,
+        kind: action.kind,
+        path: action.path,
+        precondition: f.precondition,
+        content: bodyOf(action),
+      };
+      /** @type {LogEntry} */
+      let entry;
+      try {
+        const result = await applyAction(repo, writer, action, manifest);
+        if (result.changed) {
+          changedThisPass = true;
+          // Persist per successful action, not once at the end. A later action
+          // that throws would otherwise leave regions on disk with no manifest
+          // entry — and an unrecorded region is refused on the next run, so
+          // the user would be stuck with output this tool will no longer
+          // touch. The manifest write is inside this try on purpose: if it
+          // fails, the region really is unrecorded and that is a failure worth
+          // reporting as one.
+          if (result.manifest !== manifest) {
+            manifest = result.manifest;
+            await writer.write(
+              MANIFEST_PATH,
+              `${JSON.stringify(manifest, null, 2)}\n`,
+            );
+          }
+          entry = { ...base, outcome: "changed", detail: result.reason };
+        } else {
+          entry = { ...base, outcome: "skipped", detail: result.reason };
+          settled.add(settledKey(entry));
+        }
+      } catch (err) {
+        // `applyAction` lets the writer's containment refusals through
+        // deliberately: a path that escapes the root, names `.git`, or is a
+        // symlink out of it means something reached us that should never have
+        // been constructed. It stops this action, not the run.
+        entry = { ...base, outcome: "failed", detail: messageOf(err) };
+        settled.add(settledKey(entry));
+      }
+      log.push(entry);
+      onEntry?.(entry);
+    }
+    if (!changedThisPass) break;
+  }
+
+  return { log, passes, capHit };
+}
 
 await main();
 
@@ -316,89 +440,34 @@ async function main() {
     );
   }
   /** @type {import('../lib/manifest.js').Manifest} */
-  let manifest = read.ok ? read.manifest : { schemaVersion: 1, entries: {} };
+  const manifest = read.ok ? read.manifest : { schemaVersion: 1, entries: {} };
 
-  /** @type {LogEntry[]} */
-  const log = [];
-  let passes = 0;
-  let capHit = false;
-
-  if (opts.write) {
-    const writer = createFsWriter(opts.path);
-    // Ids whose action was attempted and changed nothing. Every "no change"
-    // reason this layer produces is deterministic — the file is already there,
-    // the region was edited by hand, the document has duplicate markers, the
-    // writer refused the path — so re-attempting it next pass would print the
-    // same line again and could never terminate on its own. Recording them
-    // makes the loop strictly progress-driven, independently of the cap.
-    /** @type {Set<string>} */
-    const settled = new Set();
-
-    for (;;) {
-      if (passes >= MAX_PASSES) {
-        capHit = true;
-        break;
-      }
-      passes++;
-
-      const found = await runChecks(ACTION_CAPABLE, repo);
-      const todo = found.filter((f) => f.action !== null && !settled.has(f.id));
-      if (todo.length === 0) break;
-
-      let changedThisPass = false;
-      for (const f of todo) {
-        const action = /** @type {import('../lib/actions.js').Action} */ (
-          f.action
-        );
-        const base = {
-          pass: passes,
-          id: f.id,
-          kind: action.kind,
-          path: action.path,
-          precondition: f.precondition,
-        };
-        if (!opts.json && f.precondition) {
-          process.stderr.write(`  before ${f.id}: ${f.precondition}\n`);
-        }
-        try {
-          const result = await applyAction(repo, writer, action, manifest);
-          if (result.changed) {
-            changedThisPass = true;
-            // Persist per successful action, not once at the end. A later
-            // action that throws would otherwise leave regions on disk with no
-            // manifest entry — and an unrecorded region is refused on the next
-            // run, so the user would be stuck with output this tool will no
-            // longer touch. The manifest write is inside this try on purpose:
-            // if it fails, the region really is unrecorded and that is a
-            // failure worth reporting as one.
-            if (result.manifest !== manifest) {
-              manifest = result.manifest;
-              await writer.write(
-                MANIFEST_PATH,
-                `${JSON.stringify(manifest, null, 2)}\n`,
-              );
-            }
-            log.push({ ...base, outcome: "changed", detail: result.reason });
-          } else {
-            settled.add(f.id);
-            log.push({ ...base, outcome: "skipped", detail: result.reason });
+  // Both modes run the same loop. `--write` drives the real repository through
+  // a real writer; the dry run drives an in-memory overlay, which is what makes
+  // its plan the WHOLE plan rather than the first pass of it.
+  const { log, passes, capHit } = opts.write
+    ? await converge({
+        repo,
+        writer: createFsWriter(opts.path),
+        manifest,
+        onEntry(entry) {
+          if (opts.json) return;
+          if (entry.precondition && entry.pass === 1) {
+            process.stderr.write(
+              `  before ${entry.id}: ${entry.precondition}\n`,
+            );
           }
-        } catch (err) {
-          // `applyAction` lets the writer's containment refusals through
-          // deliberately: a path that escapes the root, names `.git`, or is a
-          // symlink means something reached us that should never have been
-          // constructed. It stops this action, not the run.
-          settled.add(f.id);
-          log.push({ ...base, outcome: "failed", detail: messageOf(err) });
-        }
-        if (!opts.json) {
-          const last = log[log.length - 1];
-          process.stderr.write(`  ${last.outcome.padEnd(7)} ${last.id}\n`);
-        }
-      }
-      if (!changedThisPass) break;
-    }
-  }
+          process.stderr.write(`  ${entry.outcome.padEnd(7)} ${entry.id}\n`);
+        },
+      })
+    : await (async () => {
+        const overlay = createOverlay(repo);
+        return await converge({
+          repo: overlay.repo,
+          writer: overlay.writer,
+          manifest,
+        });
+      })();
 
   const findings = await runChecks(CHECKS, repo);
 
@@ -432,15 +501,31 @@ async function main() {
           passes,
           capHit,
           notes,
-          planned: outstanding.map((f) => ({
-            id: f.id,
-            kind: /** @type {import('../lib/actions.js').Action} */ (f.action)
-              .kind,
-            path: /** @type {import('../lib/actions.js').Action} */ (f.action)
-              .path,
-            precondition: f.precondition,
-          })),
-          applied: log,
+          // In a dry run `planned` is the loop's own log, run against an
+          // in-memory overlay — every action `--write` would take, in order,
+          // with the body it would write. It used to be the actions the single
+          // pass of checks happened to emit, which omitted every action a
+          // later pass would open up.
+          //
+          // Under `--write` the loop has already run, so `planned` keeps its
+          // other meaning: what is STILL outstanding afterwards.
+          planned: opts.write
+            ? outstanding.map((f) => ({
+                id: f.id,
+                kind: /** @type {import('../lib/actions.js').Action} */ (
+                  f.action
+                ).kind,
+                path: /** @type {import('../lib/actions.js').Action} */ (
+                  f.action
+                ).path,
+                precondition: f.precondition,
+              }))
+            : log,
+          // `content` is dropped here: under --write the bodies are already on
+          // disk and `git diff` is the better place to read them.
+          applied: opts.write
+            ? log.map(({ content: _content, ...rest }) => rest)
+            : [],
           ...base,
         },
         null,
@@ -449,7 +534,7 @@ async function main() {
     );
   } else {
     process.stdout.write(
-      `${renderRun({ opts, notes, log, findings, outstanding, passes, capHit })}\n`,
+      `${renderRun({ opts, notes, log, findings, passes, capHit })}\n`,
     );
   }
 
@@ -466,20 +551,11 @@ async function main() {
  * @param {string[]} args.notes
  * @param {LogEntry[]} args.log
  * @param {import('../lib/finding.js').Finding[]} args.findings
- * @param {import('../lib/finding.js').Finding[]} args.outstanding
  * @param {number} args.passes
  * @param {boolean} args.capHit
  * @returns {string}
  */
-function renderRun({
-  opts,
-  notes,
-  log,
-  findings,
-  outstanding,
-  passes,
-  capHit,
-}) {
+function renderRun({ opts, notes, log, findings, passes, capHit }) {
   const out = [`# Adapting ${opts.path}`, ""];
 
   for (const note of notes) {
@@ -492,23 +568,43 @@ function renderRun({
         "`--write` to apply it.",
       "",
     );
-    if (outstanding.length === 0) {
+    if (log.length === 0) {
       out.push("No finding carries an automatic fix. Nothing to apply.", "");
     } else {
-      out.push(`${outstanding.length} finding(s) carry an automatic fix.`, "");
-      for (const f of outstanding) {
-        out.push(`### \`${f.id}\` — ${describeAction(f)}`, "");
-        const action = /** @type {import('../lib/actions.js').Action} */ (
-          f.action
-        );
-        if (action.kind === "append-lines") {
-          out.push("```", ...action.lines, "```", "");
+      out.push(
+        `${log.length} change(s) planned, over ${passes} pass(es). A finding ` +
+          `carries one action and the checks are re-run after each is applied, ` +
+          `so a fix can open up another — this is the whole sequence, not the ` +
+          `first pass of it. \`--write\` will also create ` +
+          `\`${MANIFEST_PATH}\`, the record of which regions are generated.`,
+        "",
+      );
+      for (const e of log) {
+        out.push(`### \`${e.id}\` — ${describeEntry(e)}`, "");
+        if (e.outcome !== "changed") {
+          out.push(`**Would not be applied** (${e.outcome}): ${e.detail}`, "");
         }
-        // Printed before anything is applied, in both modes. A tool that
-        // applies a fix while suppressing the caveat attached to that fix is
-        // worse than one that does not apply it.
-        if (f.precondition) {
-          out.push(`**Before applying.** ${f.precondition}`, "");
+        // Printed before anything is applied. A tool that applies a fix while
+        // suppressing the caveat attached to that fix is worse than one that
+        // does not apply it — and the caveat says the content is the thing to
+        // read, so the content is printed too, for every kind. It used to be
+        // printed only for `append-lines`, which meant a 30-line issue
+        // template and a generated `## Guardrails` section went into
+        // somebody's repository sight-unseen.
+        if (e.precondition) {
+          out.push(`**Before applying.** ${e.precondition}`, "");
+        }
+        if (e.outcome === "changed") {
+          out.push(
+            e.kind === "write-region"
+              ? `What goes inside the \`${e.path}\` region:`
+              : "What it writes:",
+            "",
+            "```",
+            ...e.content.split("\n"),
+            "```",
+            "",
+          );
         }
       }
     }
