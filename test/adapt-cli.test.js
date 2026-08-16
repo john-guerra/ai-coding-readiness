@@ -233,6 +233,38 @@ describe("bin/adapt.mjs — dry run", () => {
       expect(guardrails.precondition).toMatch(/generic starting point/i);
     });
   });
+
+  // The convergence loop runs only the three action-capable checks. If a
+  // fourth ever starts carrying an action, the dry run would keep advertising
+  // it while --write silently never applied it. The CLI notices at runtime;
+  // this notices in CI.
+  it("no check outside the convergence loop carries an action", async () => {
+    /** @param {string} dir */
+    const idsWithActions = async (dir) => {
+      const r = await adapt(["--path", dir, "--json"]);
+      return new Set(
+        JSON.parse(r.stdout)
+          .findings.filter((/** @type {any} */ f) => f.action !== null)
+          .map((/** @type {any} */ f) => f.id),
+      );
+    };
+    const allowed = new Set([
+      "repo.hygiene",
+      "guide.guardrails",
+      "github.contribution-scaffold",
+    ]);
+    /** @param {Set<string>} ids */
+    const assertAllowed = (ids) => {
+      for (const id of ids) expect([...allowed]).toContain(id);
+    };
+
+    await withRepo(async (dir) => assertAllowed(await idsWithActions(dir)));
+    // An empty directory fails a different set of checks.
+    await withRepo(async (dir) => assertAllowed(await idsWithActions(dir)), {
+      git: false,
+      seed: async () => {},
+    });
+  });
 });
 
 describe("bin/adapt.mjs — --write", () => {
