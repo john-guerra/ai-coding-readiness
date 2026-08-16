@@ -131,6 +131,37 @@ describe("bin/audit.mjs", () => {
     }
   });
 
+  // Repo-controlled content must not make the audit read, count, or quote a
+  // file outside the directory it was pointed at.
+  it("never reads or quotes a file outside --path", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "audit-escape-"));
+    const dir = join(parent, "repo");
+    try {
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(parent, "secret.md"),
+        "AWS_SECRET=never-share-this-value\n",
+        "utf8",
+      );
+      await writeFile(
+        join(dir, "CLAUDE.md"),
+        "# Guide\n\n@../secret.md\n\n## Guardrails\n\nNever touch production.\n",
+        "utf8",
+      );
+      const r = await audit(["--path", dir, "--json"]);
+      expect(r.stdout).not.toMatch(/AWS_SECRET/);
+      expect(r.stdout).not.toMatch(/never-share-this-value/);
+      expect(r.stdout).not.toMatch(/secret\.md/);
+      expect(r.stderr).not.toMatch(/AWS_SECRET/);
+      const budget = JSON.parse(r.stdout).findings.find(
+        (/** @type {any} */ f) => f.id === "guide.context-budget",
+      );
+      expect(budget.evidence).not.toMatch(/secret/);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
   it("emits well-formed JSON that is not truncated", async () => {
     const dir = await mkdtemp(join(tmpdir(), "audit-cli-"));
     try {

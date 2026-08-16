@@ -215,6 +215,51 @@ describe("resolveImports", () => {
     const { files } = await resolveImports(repo, /** @type {any} */ (guide));
     expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
   });
+
+  // The one that got out: `..` was not covered by the ~/-rooted guard, so
+  // repo-controlled content made the audit read — and quote — a file outside
+  // the directory it was pointed at.
+  it("skips a ../-escaping import path even when a file exists at that literal key", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "CLAUDE.md": "@../secret.md\n",
+        "../secret.md": "AWS_SECRET=never-share-this-value\n",
+      },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
+  });
+
+  it("skips an import that only escapes the root after normalization", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "CLAUDE.md": "@docs/../../secret.md\n",
+        "docs/../../secret.md": "AWS_SECRET=never-share-this-value\n",
+      },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
+  });
+
+  // The guard is about escaping the root, not about `..` appearing at all: a
+  // path that traverses up and back down is still inside and stays an import.
+  // (The path is recorded as written; the guard normalizes only to decide.)
+  it("still follows an import that traverses up but stays inside the root", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "CLAUDE.md": "@docs/../AGENTS.md\n",
+        "docs/../AGENTS.md": "content\n",
+      },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual([
+      "CLAUDE.md",
+      "docs/../AGENTS.md",
+    ]);
+  });
 });
 
 describe("guideCorpus", () => {
