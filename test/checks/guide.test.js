@@ -123,6 +123,69 @@ describe("guide.commands", () => {
     expect(f.status).not.toBe("pass");
     expect(f.status).toBe("fail");
   });
+
+  it("does not pass an ordinary English word used as the test command, mentioned only in prose", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "check" }),
+          "CLAUDE.md": "# Guide\n\nDouble check your changes.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/not credited/);
+  });
+
+  it("does not pass 'lint' used as the test command, mentioned only in prose", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "lint" }),
+          "CLAUDE.md": "# Guide\n\nWe lint on save.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+  });
+
+  it("does not pass a multi-word script whose first word appears only in prose", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "echo no tests" }),
+          "CLAUDE.md": "# Guide\n\nJust echo the result.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+  });
+
+  it("passes a bare single-word command when it appears inside backticks", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "check" }),
+          "CLAUDE.md": "# Guide\n\nRun `check` before committing.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+    expect(f.evidence).toMatch(/check/);
+  });
+
+  it("passes but quotes the matched line, even when the guide negates it", async () => {
+    const f = await commands.run(
+      createFakeRepo({
+        files: {
+          "package.json": pkg({ test: "npm test" }),
+          "CLAUDE.md": "# Guide\n\nDo not run `npm test` — use `make check`.\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+    expect(f.evidence).toMatch(/Do not run/);
+  });
 });
 
 describe("guide.guardrails", () => {
