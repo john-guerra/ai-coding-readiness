@@ -131,6 +131,30 @@ describe("bin/audit.mjs", () => {
     }
   });
 
+  // The point of this milestone: a fresh project gets real findings rather
+  // than a screenful of shrugs. Verified only by hand until now.
+  it("gives an empty directory real failures and exits 1", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "audit-cli-"));
+    try {
+      const r = await audit(["--path", dir, "--json"]);
+      expect(r.code).toBe(1);
+      const parsed = JSON.parse(r.stdout);
+      expect(parsed.summary.pass).toBe(0);
+      expect(
+        parsed.findings.filter((/** @type {any} */ f) => f.status === "fail"),
+      ).not.toHaveLength(0);
+      expect(
+        parsed.findings
+          .filter((/** @type {any} */ f) => f.status === "fail")
+          .map((/** @type {any} */ f) => f.id)
+          .sort(),
+      ).toEqual(["github.contribution-scaffold", "guide.exists"]);
+      expect(parsed.summary.fail).toBe(2);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   // Repo-controlled content must not make the audit read, count, or quote a
   // file outside the directory it was pointed at.
   it("never reads or quotes a file outside --path", async () => {

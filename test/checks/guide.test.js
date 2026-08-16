@@ -19,6 +19,22 @@ describe("guide.exists", () => {
     expect(f.fix).toMatch(/\/init/);
   });
 
+  // `touch CLAUDE.md` used to turn this finding green. A file with nothing in
+  // it tells an agent nothing, so it is the same finding as no file at all.
+  it("fails on a zero-byte guide", async () => {
+    const f = await exists.run(createFakeRepo({ files: { "CLAUDE.md": "" } }));
+    expect(f.status).toBe("fail");
+    expect(f.fix).toBeTruthy();
+  });
+
+  it("fails on a guide containing only whitespace", async () => {
+    const f = await exists.run(
+      createFakeRepo({ files: { "CLAUDE.md": "\n\n   \n\t\n" } }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/empty/i);
+  });
+
   it("passes when a guide is present, regardless of its content", async () => {
     const f = await exists.run(
       createFakeRepo({

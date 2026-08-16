@@ -92,6 +92,40 @@ describe("repo.hygiene", () => {
     expect(f.evidence).toMatch(/\.DS_Store/);
   });
 
+  // Anchoring to whole entries killed the `distribution/` decoy but also
+  // rejected the commonest glob forms, so a perfectly-covered .gitignore
+  // scored 4 of 4 gaps and the fix told the maintainer to add entries that
+  // were already there — a fix that does not apply.
+  it("credits common glob forms of the required entries", async () => {
+    const f = await check.run(
+      createFakeRepo({
+        files: {
+          "package.json": "{}",
+          "package-lock.json": "x",
+          ".gitignore": "**/node_modules\ndist/**\n.env\n**/.DS_Store  \n",
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+  });
+
+  it("names only the genuinely-missing entry when the rest are globs", async () => {
+    const f = await check.run(
+      createFakeRepo({
+        files: {
+          "package.json": "{}",
+          "package-lock.json": "x",
+          ".gitignore": "**/node_modules\ndist/**\n**/.DS_Store\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/1 hygiene gap/);
+    expect(f.evidence).toMatch(/\.env/);
+    expect(f.evidence).not.toMatch(/node_modules/);
+    expect(f.evidence).not.toMatch(/\.DS_Store/);
+  });
+
   it("reports the lockfile as present, not committed", async () => {
     const f = await check.run(
       createFakeRepo({
