@@ -169,20 +169,48 @@ describe("resolveImports", () => {
     expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
   });
 
+  it("resolves an import parenthesized in prose", async () => {
+    const repo = createFakeRepo({
+      files: {
+        "CLAUDE.md": "See (@docs/a.md) for context.\n",
+        "docs/a.md": "x\n",
+      },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
+  });
+
+  it("resolves an import wrapped in square brackets", async () => {
+    const repo = createFakeRepo({
+      files: { "CLAUDE.md": "[@docs/a.md]\n", "docs/a.md": "x\n" },
+    });
+    const guide = await readGuide(repo);
+    const { files } = await resolveImports(repo, /** @type {any} */ (guide));
+    expect(files.map((f) => f.path)).toEqual(["CLAUDE.md", "docs/a.md"]);
+  });
+
   // ~-rooted and /-rooted paths cannot be resolved against the repo root, so
   // treating them as imports would either read the wrong file or silently
-  // fail — neither is what "skip" should mean.
-  it("skips a ~-rooted import path", async () => {
+  // fail — neither is what "skip" should mean. A file is placed at the
+  // literal resolved key so the test actually exercises the skip: without
+  // it, `readFile` would find the file and the assertion below would fail.
+  it("skips a ~-rooted import path even when a file exists at that literal key", async () => {
     const repo = createFakeRepo({
-      files: { "CLAUDE.md": "@~/.claude/x.md\n" },
+      files: {
+        "CLAUDE.md": "@~/.claude/x.md\n",
+        "~/.claude/x.md": "content\n",
+      },
     });
     const guide = await readGuide(repo);
     const { files } = await resolveImports(repo, /** @type {any} */ (guide));
     expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
   });
 
-  it("skips a /-rooted (absolute) import path", async () => {
-    const repo = createFakeRepo({ files: { "CLAUDE.md": "@/etc/passwd\n" } });
+  it("skips a /-rooted (absolute) import path even when a file exists at that literal key", async () => {
+    const repo = createFakeRepo({
+      files: { "CLAUDE.md": "@/etc/passwd\n", "/etc/passwd": "content\n" },
+    });
     const guide = await readGuide(repo);
     const { files } = await resolveImports(repo, /** @type {any} */ (guide));
     expect(files.map((f) => f.path)).toEqual(["CLAUDE.md"]);
