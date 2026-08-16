@@ -7,6 +7,7 @@ import {
   alwaysLoadedRules,
   countLines,
 } from "../lib/guide.js";
+import { countLines as canonicalCountLines } from "../lib/text.js";
 
 describe("readGuide", () => {
   it("returns null when no agent guide exists", async () => {
@@ -290,7 +291,17 @@ describe("alwaysLoadedRules", () => {
 describe("countLines", () => {
   it("counts the way wc -l does", () => {
     expect(countLines("a\nb\n")).toBe(2);
-    expect(countLines("a\nb")).toBe(2);
+    expect(countLines("a\nb")).toBe(1);
     expect(countLines("")).toBe(0);
+  });
+
+  // countLines used to be defined separately in lib/guide.js and
+  // lib/checks/concurrency-pr-path-contention.js, and the two copies
+  // silently disagreed on text with no trailing newline ("a\nb": 2 vs 1).
+  // Asserting reference equality with the canonical lib/text.js export means
+  // a future reintroduction of a local copy in either file fails this test
+  // immediately, instead of waiting for another observed disagreement.
+  it("is the exact function every consumer imports from lib/text.js", () => {
+    expect(countLines).toBe(canonicalCountLines);
   });
 });
