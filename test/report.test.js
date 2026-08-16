@@ -19,6 +19,7 @@ const f = (id, status, extra = {}) =>
     precondition: null,
     fix: status === "fail" ? "do it" : null,
     autoFixable: false,
+    action: null,
     ...extra,
   });
 

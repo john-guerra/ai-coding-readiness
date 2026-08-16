@@ -90,7 +90,14 @@ describe("concurrency.pr-path-contention", () => {
     expect(f.status).toBe("fail");
     expect(f.evidence).toMatch(/CHANGELOG\.md/);
     expect(f.fix).toMatch(/changesets|towncrier/i);
-    expect(f.autoFixable).toBe(true);
+    // The metadata half is classified as metadata — the assertion that used to
+    // be spelled `autoFixable === true`. `autoFixable` now means the finding
+    // ships an action a machine applies, and "adopt changesets" is a tool
+    // choice and a team convention, not a file this tool may write. What must
+    // still hold is that a metadata row is not filed under the god-file
+    // remediation, which is the branch that says there is no automatic fix.
+    expect(f.fix).not.toMatch(/no automatic fix/i);
+    expect(f.autoFixable).toBe(false);
   });
 
   // Rule 5: report what you cannot fix, and say so.
@@ -190,12 +197,14 @@ describe("concurrency.pr-path-contention", () => {
     expect(f.evidence).toMatch(/package-lock\.json/);
   });
 
-  // The flagship demo contradicted itself: it printed the changesets
-  // remediation and then, three lines later, "This finding has no automatic
-  // fix; it needs a person." A co-contended lockfile — package.json plus
-  // package-lock.json, the most common Node shape there is — is not an
-  // obstacle to auto-fixing the metadata half.
-  it("stays auto-fixable when a lockfile is contended alongside package.json", async () => {
+  // A co-contended lockfile — package.json plus package-lock.json, the most
+  // common Node shape there is — must not be classified as a source file and
+  // divert the finding into the god-file branch, which says there is no
+  // automatic fix at all. This was originally asserted through
+  // `autoFixable === true`; that field now reports whether an action ships,
+  // not who the remediation is for, so the classification is asserted through
+  // the remediation text instead.
+  it("keeps a contended lockfile in the metadata half, not the god-file half", async () => {
     const lists = Array.from({ length: 20 }, (_, i) => [
       `src/f${i}.js`,
       "package.json",
@@ -206,7 +215,8 @@ describe("concurrency.pr-path-contention", () => {
     expect(f.evidence).toMatch(/package\.json/);
     expect(f.evidence).toMatch(/package-lock\.json/);
     expect(f.fix).toMatch(/changesets|towncrier/i);
-    expect(f.autoFixable).toBe(true);
+    expect(f.fix).not.toMatch(/no automatic fix/i);
+    expect(f.autoFixable).toBe(false);
   });
 
   // A tool that tells people their line counts are stale has to agree with

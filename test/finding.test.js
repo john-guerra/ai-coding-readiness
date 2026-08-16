@@ -12,6 +12,7 @@ const base = {
   precondition: null,
   fix: null,
   autoFixable: false,
+  action: null,
 };
 
 describe("makeFinding", () => {
@@ -48,5 +49,80 @@ describe("makeFinding", () => {
     expect(() => makeFinding({ ...base, layer: "judgment" })).toThrow(
       /judgment/i,
     );
+  });
+});
+
+describe("makeFinding action invariant", () => {
+  const failing = {
+    ...base,
+    id: "x.y",
+    status: "fail",
+    fix: "do it",
+  };
+
+  it("accepts a finding with no action when autoFixable is false", () => {
+    expect(makeFinding(failing).action).toBeNull();
+  });
+
+  it("accepts an action when autoFixable is true", () => {
+    const action = { kind: "write-file", path: "a", content: "b" };
+    expect(
+      makeFinding({ ...failing, autoFixable: true, action }).action,
+    ).toEqual(action);
+  });
+
+  it("accepts every kind the writer knows how to apply", () => {
+    const actions = [
+      { kind: "write-file", path: "a", content: "b" },
+      { kind: "append-lines", path: "a", lines: ["b"] },
+      { kind: "write-region", path: "a", id: "r", inner: "b", version: 1 },
+    ];
+    for (const action of actions) {
+      expect(
+        makeFinding({ ...failing, autoFixable: true, action }).action,
+      ).toEqual(action);
+    }
+  });
+
+  // The claim stops being free: saying a fix is automatic now requires
+  // shipping the thing that automates it.
+  it("rejects autoFixable true with no action", () => {
+    expect(() =>
+      makeFinding({ ...failing, autoFixable: true, action: null }),
+    ).toThrow(/autoFixable/i);
+  });
+
+  it("rejects an action when autoFixable is false", () => {
+    expect(() =>
+      makeFinding({
+        ...failing,
+        autoFixable: false,
+        action: { kind: "write-file", path: "a", content: "b" },
+      }),
+    ).toThrow(/autoFixable/i);
+  });
+
+  it("rejects an unknown action kind", () => {
+    expect(() =>
+      makeFinding({
+        ...failing,
+        autoFixable: true,
+        action: { kind: "rm -rf", path: "a" },
+      }),
+    ).toThrow(/kind/i);
+  });
+
+  // An action-shaped object with no `kind` at all is the same mistake as a
+  // misspelled one, and must not slip through as "not a known kind, but the
+  // check said autoFixable, so fine".
+  it("rejects an action with no kind", () => {
+    expect(() =>
+      makeFinding({ ...failing, autoFixable: true, action: { path: "a" } }),
+    ).toThrow(/kind/i);
+  });
+
+  it("still requires action to be present, not merely undefined", () => {
+    const { action, ...without } = failing;
+    expect(() => makeFinding(without)).toThrow(/action/i);
   });
 });
