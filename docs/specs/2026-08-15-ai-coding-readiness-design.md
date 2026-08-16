@@ -13,6 +13,15 @@ shipped tool.
 **Ships as:** the public repository `john-guerra/ai-coding-readiness`,
 installable as a Claude Code plugin. Command namespace `/ai-ready`.
 
+> **The npm name `ai-ready` is taken** — by an unrelated third party's package
+> ("Automatic Claude Code plugin discovery for npm dependencies", 1.0.0-alpha.2,
+> verified against the registry 2026-08-15). `ai-coding-readiness` is not
+> published at all (404). So `ai-ready` is this plugin's name and a `bin` alias
+> **only**, and no document here may spell an invocation `npx ai-ready …`: a
+> reader who types it runs someone else's code. Every CLI in this design is
+> invoked as `node "${CLAUDE_PLUGIN_ROOT}/bin/<script>"` until
+> `ai-coding-readiness` is published under that name.
+
 ---
 
 ## 1. What this is
@@ -487,7 +496,9 @@ by which point the code is already merged.
 > swap is now unconditional**; a missing block adds a separate `missing-handoff`
 > label.
 
-**3 — `npx ai-ready validate` makes it cheap** *(v0.2)*. Reads the
+**3 — a `validate` subcommand makes it cheap** *(v0.2)*. Invoked the way the
+audit is — `node "${CLAUDE_PLUGIN_ROOT}/bin/audit.mjs" validate` — and **not**
+as `npx ai-ready validate`; see the note under "Ships as". Reads the
 `needs-validation` queue; per issue prints the block, offers to run the command,
 takes `[p]ass / [f]ail / [s]kip`. Pass closes with a comment; fail relabels and
 captures why.
@@ -602,7 +613,7 @@ marked regions + manifest + idempotency gate · the validation block and its
 
 | Deferred | Trigger |
 | --- | --- |
-| `npx ai-ready validate` CLI | v0.2 — fix the enforcement point first; the block + gate deliver value alone |
+| `validate` subcommand (never spelled `npx ai-ready validate` — see "Ships as") | v0.2 — fix the enforcement point first; the block + gate deliver value alone |
 | `invariant-reviewer` agent + PR job | v0.2 — the thesis ships without a CI bot |
 | Gate-rung timing (`loop.timing`) | v0.2 — slow, environment-dependent, and its fix presupposes a tagged subset. The cheap half (docs asserting stale numbers) folds into `docs.unenforced-invariants` |
 | Python pack | The node pack interface proven against a second real repo — not written blind |

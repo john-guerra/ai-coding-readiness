@@ -86,6 +86,10 @@ describe("repo.hygiene", () => {
       }),
     );
     expect(f.status).toBe("fail");
+    // 4 of 4, still. This is the case the whole whole-entry rewrite exists
+    // for: `.envrc` has no `*` and is not `.env`, so the trailing-`*` rule
+    // below must not rescue it, and `distribution/` must not cover `dist`.
+    expect(f.evidence).toMatch(/4 hygiene gap/);
     expect(f.evidence).toMatch(/node_modules/);
     expect(f.evidence).toMatch(/dist|build/);
     expect(f.evidence).toMatch(/\.env/);
@@ -124,6 +128,65 @@ describe("repo.hygiene", () => {
     expect(f.evidence).toMatch(/\.env/);
     expect(f.evidence).not.toMatch(/node_modules/);
     expect(f.evidence).not.toMatch(/\.DS_Store/);
+  });
+
+  // A trailing `*` is a prefix glob to git — `*` matches the empty string, so
+  // `.env*` really does ignore `.env`:
+  //   $ printf '.env*\n' > .gitignore && git check-ignore -v .env
+  //   .gitignore:1:.env*	.env
+  // Reporting a gap here told the maintainer to add an entry already covered,
+  // which is the one thing a remediation is never allowed to be.
+  it("credits a trailing-* entry, which is what git actually does", async () => {
+    const f = await check.run(
+      createFakeRepo({
+        files: {
+          "package.json": "{}",
+          "package-lock.json": "x",
+          ".gitignore": "node_modules*\ndist*\n.env*\n.DS_Store\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("pass");
+  });
+
+  it("credits each trailing-* form on its own, leaving the others as gaps", async () => {
+    for (const [entry, covered] of [
+      ["node_modules*", "node_modules"],
+      ["dist*", "build output"],
+      [".env*", ".env"],
+    ]) {
+      const f = await check.run(
+        createFakeRepo({
+          files: {
+            "package.json": "{}",
+            "package-lock.json": "x",
+            ".gitignore": `${entry}\n`,
+          },
+        }),
+      );
+      expect(f.status, entry).toBe("fail");
+      expect(f.evidence, entry).toMatch(/3 hygiene gap/);
+      expect(f.evidence, entry).not.toMatch(
+        new RegExp(covered.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+      );
+    }
+  });
+
+  // The trailing-* rule is a PREFIX rule, not "contains". `.env` must not be
+  // covered by an entry for something else that happens to start similarly.
+  it("does not let a trailing-* entry cover a name it is not a prefix of", async () => {
+    const f = await check.run(
+      createFakeRepo({
+        files: {
+          "package.json": "{}",
+          "package-lock.json": "x",
+          ".gitignore": "node_modules/\ndist/\n.envrc*\n.DS_Store\n",
+        },
+      }),
+    );
+    expect(f.status).toBe("fail");
+    expect(f.evidence).toMatch(/1 hygiene gap/);
+    expect(f.evidence).toMatch(/\.env/);
   });
 
   it("reports the lockfile as present, not committed", async () => {
