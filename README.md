@@ -1,8 +1,19 @@
 # ai-coding-readiness
 
-> **Status: design phase. Nothing is implemented yet.**
-> The design is in [`docs/specs/`](docs/specs/). There is no installable
-> plugin at this commit — do not expect one until v0.1 is tagged.
+## Install
+
+As a Claude Code plugin:
+
+```
+/plugin marketplace add john-guerra/ai-coding-readiness
+/plugin install ai-ready@john-guerra
+```
+
+Then `/ai-ready:audit`, or run the CLI directly from a clone:
+
+```bash
+node bin/audit.mjs --path <repo>
+```
 
 A Claude Code plugin that **diagnoses** how ready a GitHub repository is for
 AI-assisted collaboration, and then **adapts** it — writing the harness that
