@@ -1239,3 +1239,223 @@ node bin/audit.mjs --path /Users/aguerra/workspace/autogallery   # still 6 fail,
 ## Execution Handoff
 
 Plan complete and saved to `docs/superpowers/plans/2026-08-16-milestone-2-adapt.md`.
+
+---
+
+# Amendments after independent plan review
+
+**Verdict was Rework.** These supersede the task text above wherever they
+conflict. Seven Criticals, three of which I reproduced live before writing this.
+Each amendment names what it replaces.
+
+## B1 — supersedes Task 3's `assertInside`: it does not contain anything
+
+Reproduced on this machine, with the plan's function verbatim:
+
+```
+symlinked file   : assertInside ALLOWED -> root/CLAUDE.md
+                   outside/secret.txt is now: CLOBBERED
+symlinked dir    : mkdir -p created outside/deep/ ? true
+.GIT/config      : allowed on a case-insensitive filesystem; .git/config overwritten
+```
+
+`resolve()` is **lexical** — it does not follow symlinks, and `writeFile`/`mkdir`
+do. So a repo containing a symlink can make the tool destroy a file outside the
+directory it was pointed at, and `mkdir -p` creates directories outside the root
+*before* any refusal runs. This is the write-side twin of the `@../secret.md`
+path-traversal the previous milestone shipped, with destruction instead of
+disclosure as the consequence.
+
+The plan also said "reuse the containment added to `createFsRepo`" and then
+**reimplemented it, worse**: `lib/repo.js` guards the trailing-separator case
+(`base.endsWith(sep) ? base : base + sep`); the plan's copy does not, so a root
+of `/` yields `//` and refuses everything. A second copy of a security predicate
+is a second thing to get wrong, and it already was.
+
+**Required:**
+
+1. **Extract `insideRoot(root, path)` into one shared module** and have both
+   `lib/repo.js` and `lib/writer.js` import it. Not a copy.
+2. After `mkdir`, **`realpath()` the parent directory** and re-assert
+   containment before writing.
+3. **`lstat()` the final target and refuse a symlink** (or open with
+   `O_NOFOLLOW`).
+4. **Refuse when the existing target is a directory.**
+5. **Case-fold the `.git` comparison, and refuse a `.git` component at any
+   depth** — a submodule or vendored `.git` is currently writable.
+6. Fix the off-by-one in `rel = target.slice(base.length + 1)` when `base` ends
+   with a separator.
+
+Add a test for each of the three reproduced bypasses. The plan's four writer
+tests all pass against the broken implementation — that is the point.
+
+## B2 — supersedes Task 4's premise and Step 4: it is eight sites, not two
+
+The plan states three times that two findings claim `autoFixable: true`.
+Verified: **seven check files** contain it, plus a conditional in
+`concurrency-pr-path-contention.js` — eight sites.
+
+```
+repo-hygiene · github-contribution-scaffold · guide-guardrails · guide-commands
+ci-no-diff-can-fail-on-gate · ci-flake-observability · ci-e2e-sharded
+concurrency-pr-path-contention (conditional)
+```
+
+My earlier survey ran against a temp directory that only made three checks fail;
+the rest carry `autoFixable: true` in their `base` and inherit it. The premise
+was wrong by a factor of four.
+
+**Consequence the plan must own rather than discover.** Under decision 2, four of
+those eight can never carry an action this milestone — `ci.e2e-sharded`,
+`ci.flake-observability`, `ci.no-diff-can-fail-on-gate` and `guide.commands` all
+need YAML or Playwright-config rewrites. They become **permanently**
+`autoFixable: false`, and `lib/report.js` will therefore append *"This finding
+has no automatic fix; it needs a person."* to four more findings. That is more
+honest and it is the right outcome — but it is a deliberate, user-visible report
+change that belongs in the commit message, not a surprise in Task 4.
+
+**Failure mode if executed as written:** six checks would call `makeFinding` with
+`autoFixable: true, action: null`, the new invariant throws, `runChecks` catches
+it (`lib/registry.js`) and converts it to `status: "unknown"`. So six real `fail`
+verdicts would silently become `unknown` with evidence reading `check threw: …`.
+Not a loud crash — a quiet downgrade.
+
+**Also missing from Step 4's call-site list:** `test/report.test.js`,
+`test/registry.test.js`, and the module-level `base` in `test/finding.test.js`
+all call `makeFinding` without `action`. The first two are not in Step 5's
+`git add` list either.
+
+## B3 — supersedes Task 1: CRLF corrupts the file on every run
+
+Verified: `findRegion` hardcodes `\n` after the begin marker, so on a CRLF
+checkout it returns `null` — and `upsertRegion` therefore **appends a brand-new
+region every single run**, unbounded, while the manifest never matches.
+
+```
+LF   findRegion: MATCH
+CRLF findRegion: null
+```
+
+Most Windows contributors check out with `core.autocrlf=true`. For a tool whose
+headline safety property is "idempotent, byte-identical", silently growing a
+file forever is the worst available outcome.
+
+**Required:** `\r?\n` throughout `findRegion`, `ANY_REGION` and `stripRegions`;
+detect the file's dominant line ending and emit the block with it; add a CRLF
+fixture to `test/regions.test.js` **and** to the idempotency gate, which
+otherwise only ever runs on a macOS temp repo and will never see this.
+
+## B4 — supersedes Task 3's `write-region`: an unrecorded region is silently overwritten
+
+`applyAction` refuses only on `classify(...) === "edited"`. `"absent"` falls
+through to the overwrite — so a region that physically exists with **no manifest
+entry** gets clobbered. That happens whenever the manifest was deleted, was
+unparseable, or a human copied the marker syntax into their own file.
+
+Spec §4 says "hash unchanged → safe to update; hash changed → the human edited
+it." No entry means the hash is **unknown**, which is not "unchanged". This is
+the write-side analogue of *"`unknown` is never `pass`"* — the rule this
+codebase has broken six times — reintroduced in the one function where breaking
+it costs a user their file.
+
+**Required:** refuse when the region exists and `classify` returns `"absent"`,
+with a distinct reason naming that we have no record of writing it. Every
+`write-region` test in the plan seeds a manifest entry; add one that does not.
+
+## B5 — supersedes Task 2 and Task 6: the corrupt-manifest refusal is a comment
+
+`readManifest` returns the same empty value for "absent" and "corrupt", so the
+caller **cannot** distinguish them even if it wanted to — and Task 6's CLI
+contract never mentions the refusal at all. Combined with B4, one corrupt byte in
+`manifest.json` silently overwrites every generated region in the repository.
+
+**Required:** `readManifest` returns `{ok: false}` (or throws) on unparseable
+input; `bin/adapt.mjs` **refuses `--write`** on an unreadable manifest with a
+named exit code; both get tests.
+
+## B6 — supersedes Global Constraints and Task 6 Step 4: the gate contradicts decision 4
+
+`adapt --write; adapt --write; git diff --exit-code` cannot run: the first
+`--write` dirties the tree, and decision 4 makes the second exit 2.
+
+**Ruling: the gate commits between runs.** That is closer to real usage than
+`--allow-dirty` and it additionally proves the manifest survives a commit —
+which B4 makes load-bearing. `scripts/check-idempotent.mjs` must
+`git add -A && git commit` between the two `--write` invocations, and assert
+`git diff --exit-code` is clean after the second.
+
+## B7 — supersedes Task 5: drop CODEOWNERS generation
+
+The plan says derive the owner "from the `gh` remote if available." Every reading
+is wrong: `gh repo view` is **a second network path**, which `AGENTS.md` forbids
+without a spec decision; `git remote get-url` is local but `Repo` exposes no
+accessor for it; and the derived owner is usually an **organization**, so
+`* @some-org` is not valid CODEOWNERS syntax — GitHub renders it as "Unknown
+owner" and required-review-by-owner silently never fires.
+
+A generated file that looks correct and quietly does nothing is worse than the
+`* @TODO` the plan already rejects, and it is exactly the confidently-wrong
+remediation this project's rule 4 exists to prevent.
+
+**Required:** `github.contribution-scaffold` generates the **two templates
+only**, converging in two passes. CODEOWNERS stays in the finding's `fix` prose
+as a human step.
+
+## B8 — new acceptance criterion for all of Task 5
+
+`guide.guardrails` passes only when its `PROHIBITION` regex matches. Nothing in
+Task 5 required the generated region to contain such a token — so pass 1 writes,
+pass 2 sees identical content and stops, and **the finding still fails**. The
+user gets "applied 1 change, nothing left to do" beside a still-red check: the
+tool wrote into their guide and achieved nothing.
+
+**Required, for all three actions:** after the action is applied, the check that
+produced it **must pass**, and the test must assert it by re-running the check
+against the post-write repo. That closes the loop between an action and the
+finding that emitted it, and it is the only assertion that proves a remediation
+actually remediates.
+
+## B9 — the Important findings, all accepted
+
+- **Version bumps never land.** `applyAction` short-circuits on
+  `found.inner === action.inner` before `upsertRegion` runs, so `v=` freezes at
+  whatever it was when content last changed and any future migration keyed on it
+  never fires. Compare `found.version !== action.version || found.inner !== action.inner`.
+- **Duplicate or nested markers destroy content while passing the safety
+  oracle.** `stripRegions` reduces before and after to the same string, so the
+  assertion reports the write as clean while inner content vanishes. `upsertRegion`
+  must refuse when `listRegions` reports a duplicate id, or when `inner` itself
+  contains a marker. Separately, `findRegion` interpolates `id` into a `RegExp`
+  **unescaped** — validate it against `[a-z0-9-]+` on entry.
+- **Print `precondition` before applying**, in both dry-run and `--write`. A tool
+  that applies a fix while suppressing the caveat attached to that fix is worse
+  than one that does not apply it.
+- **Run only action-capable checks in the convergence loop**, then the full set
+  once for the summary. Otherwise five passes means up to five `gh` invocations.
+  Expected pass count is now **3** (two scaffold writes plus a confirming pass)
+  against a cap of 5; state that so hitting the cap reads as a bug.
+- **Persist the manifest per successful action**, not once at the end. If a later
+  action throws after regions were written, those regions exist on disk with no
+  manifest entry — which under B4 means the next run refuses them, or worse,
+  under the old behaviour overwrote them.
+- **The no-write guarantee needs a real test.** Grepping one file misses
+  transitive imports. Walk the static import graph recursively from
+  `bin/audit.mjs`, and state that `lib/finding.js` may reference `Action` only as
+  an erased JSDoc type (`import('./actions.js').Action`), never a runtime import.
+- **Specify the three dirty-tree branches:** not a git repo → **refuse `--write`**
+  (no diff, no review, no undo — decision 4's own logic); untracked files count
+  as dirty; scope the check to the audited path, not the enclosing repository.
+  Invoke `git` with an argument array.
+- **`--allow-dirty` must print what it is overriding.**
+
+## B10 — minors folded in
+
+`recordRegion` records `writtenAt` (it is in the typedef and the spec) ·
+`retireRegion` has no caller this milestone, say so rather than leaving it
+looking like an oversight · the manifest **must be committed** for classification
+to survive, say so in the skill and README, and never let a `.gitignore` action
+ignore `.ai-readiness/` · Task 5 names the exact target path per artefact, since
+`write-file` has no fallback but the check accepts several locations ·
+`append-lines`' exact-match notion of "already present" differs from
+`repo.hygiene`'s glob-aware `covers()` — note the coupling in a comment · Task 6
+also bumps `.claude-plugin/plugin.json` and its description.
